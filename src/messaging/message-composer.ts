@@ -315,6 +315,40 @@ export class MessageComposer {
     }
   }
 
+  /**
+   * Resumen en texto plano de una solicitud, para el parámetro de la plantilla.
+   * Fuera de la ventana de 24 horas es lo único que puede leer el encargado, así
+   * que debe bastarle para saber qué pasa sin abrir nada.
+   */
+  taskSummary(task: SupervisorTask): string {
+    const payload = task.payload as Record<string, unknown>;
+    const marca = task.urgent ? '🔴 Urgente. ' : '';
+
+    switch (task.type) {
+      case SupervisorTaskType.COVERAGE_APPROVAL: {
+        const offers = (payload.offers ?? []) as Array<{ participantName: string }>;
+        return (
+          `${marca}Se ofrecen a cubrir ${String(payload.shiftLabel)}: ` +
+          offers.map((offer) => offer.participantName).join(', ')
+        );
+      }
+      case SupervisorTaskType.CANCELLATION_NOTICE:
+        return (
+          `${marca}${String(payload.participantName)} canceló ${String(payload.shiftLabel)}. ` +
+          `Quedan ${String(payload.remaining)} de ${String(payload.capacity)}.`
+        );
+      case SupervisorTaskType.LOW_STAFF_ALERT:
+        return (
+          `${marca}${String(payload.shiftLabel)} quedó con ${String(payload.remaining)} participante(s), ` +
+          `debajo del mínimo de ${String(payload.minCapacity)}.`
+        );
+      case SupervisorTaskType.QUESTION:
+        return `${marca}${String(payload.participantName)} pregunta: "${String(payload.question)}"`;
+      default:
+        return `${marca}Tienes una solicitud pendiente por revisar.`;
+    }
+  }
+
   offersToApprove(
     to: string,
     shiftLabel: string,

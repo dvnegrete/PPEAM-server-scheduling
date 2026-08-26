@@ -9,7 +9,14 @@ import { TimeService } from '../../src/common/time/time.service';
 import { AppConfigModule } from '../../src/config/config.module';
 import { PrismaModule } from '../../src/prisma/prisma.module';
 import { PrismaService } from '../../src/prisma/prisma.service';
+import { ScheduleModule } from '@nestjs/schedule';
+import { ConversationModule } from '../../src/conversation/conversation.module';
+import { MessagingModule } from '../../src/messaging/messaging.module';
+import { ParticipantsModule } from '../../src/participants/participants.module';
 import { SchedulingModule } from '../../src/scheduling/scheduling.module';
+import { SupervisorsModule } from '../../src/supervisors/supervisors.module';
+import { ThreadsModule } from '../../src/threads/threads.module';
+import { WhatsAppModule } from '../../src/whatsapp/whatsapp.module';
 
 export interface TestContext {
   module: TestingModule;
@@ -41,6 +48,19 @@ const TABLES = [
   'locations',
   'admin_users',
 ];
+
+/** Contexto con la aplicación completa: usado por las pruebas de extremo a extremo. */
+export async function createFullTestContext(): Promise<TestContext> {
+  return createTestContext([
+    ScheduleModule.forRoot(),
+    WhatsAppModule,
+    ParticipantsModule,
+    SupervisorsModule,
+    ThreadsModule,
+    MessagingModule,
+    ConversationModule,
+  ]);
+}
 
 export async function createTestContext(extraImports: unknown[] = []): Promise<TestContext> {
   const module = await Test.createTestingModule({

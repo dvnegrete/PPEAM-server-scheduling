@@ -169,8 +169,11 @@ export class NotificationListeners {
     await this.notifications.sendMany(recipients, (supervisor) => ({
       interactive: (to) => this.composer.supervisorTaskNotice(to, task, event.escalated),
       template: {
+        // Fuera de la ventana de 24 h, el resumen y el botón de la plantilla son
+        // lo único con lo que cuenta el encargado para enterarse y actuar.
         name: WA_TEMPLATES.AVISO_ENCARGADO,
-        params: ['Tienes una solicitud pendiente en el sistema de horarios.'],
+        params: [this.composer.taskSummary(task)],
+        buttonPayloads: [`SOL:${task.id}`],
       },
       dedupeKey: `tarea:${task.id}:${task.notifiedCount}:${supervisor.id}`,
     }));

@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { OutboxStatus, Prisma } from '@prisma/client';
 import { PhoneService } from '../common/phone/phone.service';
+import { DomainEventBus } from '../events/domain-event-bus';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   InboundEvent,
@@ -24,7 +24,7 @@ export class InboundService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly phone: PhoneService,
-    private readonly events: EventEmitter2,
+    private readonly events: DomainEventBus,
   ) {}
 
   async ingest(events: InboundEvent[], statuses: InboundStatusEvent[]): Promise<void> {
@@ -58,8 +58,10 @@ export class InboundService {
       throw error;
     }
 
-    // El manejo real ocurre fuera del ciclo del webhook: Meta espera un 200 rápido.
-    this.events.emit(WHATSAPP_INBOUND_EVENT, event);
+    // Se espera al manejador: el trabajo es solo de base de datos (encolar la
+    // respuesta en el outbox), así que el 200 a Meta sigue llegando rápido, y a
+    // cambio un fallo queda registrado en lugar de perderse en silencio.
+    await this.events.publish(WHATSAPP_INBOUND_EVENT, event);
   }
 
   /** Busca al participante tolerando las variantes del número mexicano. */

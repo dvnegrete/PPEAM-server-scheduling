@@ -8,7 +8,6 @@ import { PrismaService } from '../prisma/prisma.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { CoverageService } from '../scheduling/coverage.service';
 import { ShiftsService } from '../scheduling/shifts.service';
-import { SupervisorTasksService } from '../supervisors/supervisor-tasks.service';
 import { SupervisorsService } from '../supervisors/supervisors.service';
 import { ThreadsService } from '../threads/threads.service';
 import { InboundService } from '../whatsapp/inbound.service';
@@ -46,7 +45,6 @@ export class ConversationService {
     private readonly assignments: AssignmentsService,
     private readonly coverage: CoverageService,
     private readonly supervisors: SupervisorsService,
-    private readonly tasks: SupervisorTasksService,
     private readonly threads: ThreadsService,
     private readonly supervisorFlow: SupervisorFlow,
     private readonly time: TimeService,

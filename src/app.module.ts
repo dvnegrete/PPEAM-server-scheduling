@@ -8,7 +8,11 @@ import { TimeModule } from './common/time/time.module';
 import { AppConfigModule } from './config/config.module';
 import { PhoneModule } from './common/phone/phone.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { ConversationModule } from './conversation/conversation.module';
+import { MessagingModule } from './messaging/messaging.module';
+import { ParticipantsModule } from './participants/participants.module';
 import { SchedulingModule } from './scheduling/scheduling.module';
+import { ThreadsModule } from './threads/threads.module';
 import { SupervisorsModule } from './supervisors/supervisors.module';
 import { WhatsAppModule } from './whatsapp/whatsapp.module';
 
@@ -26,6 +30,10 @@ import { WhatsAppModule } from './whatsapp/whatsapp.module';
     WhatsAppModule,
     SchedulingModule,
     SupervisorsModule,
+    ParticipantsModule,
+    ThreadsModule,
+    MessagingModule,
+    ConversationModule,
   ],
 })
 export class AppModule {}
