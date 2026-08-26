@@ -21,11 +21,8 @@ import { WebhookParser } from './webhook.parser';
       // flujos sin credenciales de Meta ni costo por mensaje.
       provide: WHATSAPP_CLIENT,
       inject: [AppConfigService, StubWhatsAppClient, CloudApiClient],
-      useFactory: (
-        config: AppConfigService,
-        stub: StubWhatsAppClient,
-        cloud: CloudApiClient,
-      ) => (config.whatsapp.driver === 'cloud-api' ? cloud : stub),
+      useFactory: (config: AppConfigService, stub: StubWhatsAppClient, cloud: CloudApiClient) =>
+        config.whatsapp.driver === 'cloud-api' ? cloud : stub,
     },
     WebhookParser,
     InboundService,

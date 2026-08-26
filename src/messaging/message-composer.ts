@@ -33,7 +33,11 @@ export class MessageComposer {
 
   mainMenu(to: string, name: string, isSupervisor: boolean): OutgoingMessage {
     const rows: ListRow[] = [
-      { id: encodeReply(ACTIONS.MY_SHIFTS), title: 'Mis turnos', description: 'Ver mis próximos turnos' },
+      {
+        id: encodeReply(ACTIONS.MY_SHIFTS),
+        title: 'Mis turnos',
+        description: 'Ver mis próximos turnos',
+      },
       {
         id: encodeReply(ACTIONS.CANCEL_PICK),
         title: 'Cancelar un turno',
@@ -207,9 +211,7 @@ export class MessageComposer {
       body:
         `Se necesita apoyo en el exhibidor:\n\n${shiftLabel}\n` +
         `${slotsNeeded} lugar(es) disponible(s).\n\n¿Puedes cubrirlo?`,
-      buttons: [
-        { id: encodeReply(ACTIONS.COVER_OFFER, coverageRequestId), title: 'Me ofrezco' },
-      ],
+      buttons: [{ id: encodeReply(ACTIONS.COVER_OFFER, coverageRequestId), title: 'Me ofrezco' }],
     });
   }
 
@@ -255,16 +257,8 @@ export class MessageComposer {
   // Encargados
   // -------------------------------------------------------------------------
 
-  supervisorTaskNotice(
-    to: string,
-    task: SupervisorTask,
-    escalated: boolean,
-  ): OutgoingMessage {
-    const prefijo = escalated
-      ? '⚠️ Sin atender: '
-      : task.urgent
-        ? '🔴 Urgente: '
-        : '';
+  supervisorTaskNotice(to: string, task: SupervisorTask, escalated: boolean): OutgoingMessage {
+    const prefijo = escalated ? '⚠️ Sin atender: ' : task.urgent ? '🔴 Urgente: ' : '';
     const payload = task.payload as Record<string, unknown>;
 
     switch (task.type) {
@@ -286,7 +280,7 @@ export class MessageComposer {
           body:
             `${prefijo}${String(payload.participantName)} canceló ${String(payload.shiftLabel)}.\n` +
             `Quedan ${String(payload.remaining)} de ${String(payload.capacity)} participantes.` +
-            (payload.reason ? `\nMotivo: ${String(payload.reason)}` : ''),
+            (typeof payload.reason === 'string' ? `\nMotivo: ${payload.reason}` : ''),
           buttons: [{ id: encodeReply(ACTIONS.ACK, task.id), title: 'Enterado' }],
         });
 
@@ -305,8 +299,7 @@ export class MessageComposer {
       case SupervisorTaskType.QUESTION:
         return MessageBuilder.buttons({
           to,
-          body:
-            `${prefijo}${String(payload.participantName)} pregunta:\n\n"${String(payload.question)}"`,
+          body: `${prefijo}${String(payload.participantName)} pregunta:\n\n"${String(payload.question)}"`,
           buttons: [{ id: encodeReply(ACTIONS.THREAD_REPLY, task.id), title: 'Responder' }],
         });
 

@@ -68,10 +68,7 @@ export class ReportsService {
         entityId: filters.entityId,
         action: filters.action,
         actorId: filters.actorId,
-        createdAt:
-          filters.from || filters.to
-            ? { gte: filters.from, lte: filters.to }
-            : undefined,
+        createdAt: filters.from || filters.to ? { gte: filters.from, lte: filters.to } : undefined,
       },
       orderBy: { createdAt: 'desc' },
       take: filters.limit ?? 100,

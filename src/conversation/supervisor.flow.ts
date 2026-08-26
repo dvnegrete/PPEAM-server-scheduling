@@ -209,10 +209,7 @@ export class SupervisorFlow {
       await this.coverage.approve(offerId, participant.id);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'No se pudo aprobar';
-      await this.send(
-        participant,
-        this.composer.taskResolvedByYou(participant.phoneE164, detail),
-      );
+      await this.send(participant, this.composer.taskResolvedByYou(participant.phoneE164, detail));
       return;
     }
 
@@ -221,11 +218,7 @@ export class SupervisorFlow {
       SupervisorTaskType.COVERAGE_APPROVAL,
     );
     if (task) {
-      await this.tasks.resolve(
-        task.id,
-        participant.id,
-        `Aprobado: ${offer.participant.fullName}`,
-      );
+      await this.tasks.resolve(task.id, participant.id, `Aprobado: ${offer.participant.fullName}`);
     }
 
     await this.send(
@@ -390,10 +383,7 @@ export class SupervisorFlow {
   }
 
   /** Reclama la solicitud; si otro se adelantó, avisa y devuelve null. */
-  private async claim(
-    participant: Participant,
-    taskId: string,
-  ): Promise<SupervisorTask | null> {
+  private async claim(participant: Participant, taskId: string): Promise<SupervisorTask | null> {
     try {
       return await this.tasks.claim(taskId, participant.id);
     } catch (error) {

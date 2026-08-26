@@ -52,7 +52,10 @@ function describe(message: OutgoingMessage): string {
     case 'INTERACTIVE_LIST':
       return `${message.body}\n  Botón: ${message.buttonLabel}\n${message.sections
         .flatMap((section) =>
-          section.rows.map((row) => `  • ${row.title} (${row.id})${row.description ? ` — ${row.description}` : ''}`),
+          section.rows.map(
+            (row) =>
+              `  • ${row.title} (${row.id})${row.description ? ` — ${row.description}` : ''}`,
+          ),
         )
         .join('\n')}`;
     case 'TEMPLATE':

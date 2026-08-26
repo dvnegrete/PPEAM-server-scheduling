@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ActorType, Participant, ParticipantRole, ParticipantStatus } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
-import { TimeService, Weekday } from '../common/time/time.service';
+import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 
 /** Roles que pueden atender solicitudes de participantes. */
@@ -30,7 +30,7 @@ export class SupervisorsService {
   async onDutyNow(locationId: string): Promise<Participant[]> {
     const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
     const now = this.time.nowInZone(location.timezone);
-    const weekday = this.time.weekday(now) as Weekday;
+    const weekday = this.time.weekday(now);
     const minuteOfDay = now.hour * 60 + now.minute;
 
     const supervisors = await this.prisma.participant.findMany({

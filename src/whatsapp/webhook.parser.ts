@@ -55,10 +55,7 @@ export class WebhookParser {
     return { events, statuses };
   }
 
-  private toEvent(
-    message: MetaMessage,
-    profileNames: Map<string, string>,
-  ): InboundEvent | null {
+  private toEvent(message: MetaMessage, profileNames: Map<string, string>): InboundEvent | null {
     if (!message.id || !message.from) {
       this.logger.warn('Mensaje entrante sin id o remitente; se descarta');
       return null;
@@ -85,11 +82,23 @@ export class WebhookParser {
     if (message.type === 'interactive') {
       const buttonReply = message.interactive?.button_reply;
       if (buttonReply?.id) {
-        return { ...base, type: 'reply', replyId: buttonReply.id, title: buttonReply.title, source: 'button' };
+        return {
+          ...base,
+          type: 'reply',
+          replyId: buttonReply.id,
+          title: buttonReply.title,
+          source: 'button',
+        };
       }
       const listReply = message.interactive?.list_reply;
       if (listReply?.id) {
-        return { ...base, type: 'reply', replyId: listReply.id, title: listReply.title, source: 'list' };
+        return {
+          ...base,
+          type: 'reply',
+          replyId: listReply.id,
+          title: listReply.title,
+          source: 'list',
+        };
       }
     }
 

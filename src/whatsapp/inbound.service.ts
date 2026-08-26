@@ -3,11 +3,7 @@ import { OutboxStatus, Prisma } from '@prisma/client';
 import { PhoneService } from '../common/phone/phone.service';
 import { DomainEventBus } from '../events/domain-event-bus';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  InboundEvent,
-  InboundStatusEvent,
-  WHATSAPP_INBOUND_EVENT,
-} from './types/webhook.types';
+import { InboundEvent, InboundStatusEvent, WHATSAPP_INBOUND_EVENT } from './types/webhook.types';
 
 /**
  * Registra lo que llega de WhatsApp y lo publica para que lo atienda la capa de

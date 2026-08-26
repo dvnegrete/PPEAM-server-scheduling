@@ -85,7 +85,7 @@ export class TimeService {
     const offset = (luxonWeekday - first.weekday + 7) % 7;
 
     const result: DateTime[] = [];
-    for (let day = first.day + offset; day <= first.daysInMonth!; day += 7) {
+    for (let day = first.day + offset; day <= first.daysInMonth; day += 7) {
       const occurrence = first.set({ day });
       const ordinal = Math.floor((day - 1) / 7) + 1;
       if (weekOfMonth === EVERY_WEEK || ordinal === weekOfMonth) {
@@ -102,11 +102,7 @@ export class TimeService {
    */
   toInstant(date: DateTime | Date | string, minuteOfDay: number, timezone: string): Date {
     const base = this.toLocalDate(date, timezone);
-    return base
-      .startOf('day')
-      .plus({ minutes: minuteOfDay })
-      .toUTC()
-      .toJSDate();
+    return base.startOf('day').plus({ minutes: minuteOfDay }).toUTC().toJSDate();
   }
 
   /** Minutos desde medianoche en hora local del punto. */
@@ -177,9 +173,11 @@ export class TimeService {
     }
     // Las columnas `@db.Date` llegan como medianoche UTC: se leen en UTC para
     // no correrse un día al aplicar la zona del punto.
-    return DateTime.fromJSDate(date, { zone: 'utc' }).setZone(timezone, {
-      keepLocalTime: true,
-    }).startOf('day');
+    return DateTime.fromJSDate(date, { zone: 'utc' })
+      .setZone(timezone, {
+        keepLocalTime: true,
+      })
+      .startOf('day');
   }
 
   /** Valor a guardar en una columna `@db.Date` (medianoche UTC del día local). */

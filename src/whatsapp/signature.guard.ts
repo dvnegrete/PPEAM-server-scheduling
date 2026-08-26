@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { RawBodyRequest } from '@nestjs/common';
 import type { Request } from 'express';

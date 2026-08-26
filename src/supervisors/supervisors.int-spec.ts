@@ -1,8 +1,4 @@
-import {
-  ParticipantRole,
-  SupervisorTaskStatus,
-  SupervisorTaskType,
-} from '@prisma/client';
+import { ParticipantRole, SupervisorTaskStatus, SupervisorTaskType } from '@prisma/client';
 import { createLocation, createParticipant, createShift } from '../../test/helpers/fixtures';
 import { createTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { AssignmentsService } from '../scheduling/assignments.service';
@@ -232,7 +228,7 @@ describe('Encargados: guardia y cola de solicitudes (integración)', () => {
     });
 
     it('si es urgente pero nadie se ofreció, insiste en vez de inventar una solución', async () => {
-      const { } = await escenarioVacanteUrgente();
+      await escenarioVacanteUrgente();
       const task = await ctx.prisma.supervisorTask.findFirstOrThrow({
         where: { type: SupervisorTaskType.CANCELLATION_NOTICE },
       });

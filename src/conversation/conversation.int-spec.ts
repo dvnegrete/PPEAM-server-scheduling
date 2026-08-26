@@ -1,10 +1,6 @@
 import { ParticipantRole } from '@prisma/client';
 import { createLocation, createParticipant, createShift } from '../../test/helpers/fixtures';
-import {
-  createFullTestContext,
-  resetDatabase,
-  TestContext,
-} from '../../test/helpers/test-context';
+import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { SupervisorsService } from '../supervisors/supervisors.service';
 import { InboundService } from '../whatsapp/inbound.service';
 import { OutgoingMessage } from '../whatsapp/types/message.types';
@@ -209,9 +205,7 @@ describe('Conversación por WhatsApp de extremo a extremo (integración)', () =>
     ).toBe(0);
 
     // 7. Elena recibe la solicitud de aprobación y la abre.
-    const aviso = (await outboxFor(elena.phoneE164)).find((m) =>
-      bodyOf(m).includes('Dora Sosa'),
-    );
+    const aviso = (await outboxFor(elena.phoneE164)).find((m) => bodyOf(m).includes('Dora Sosa'));
     expect(aviso).toBeDefined();
     const revisar = optionIds(aviso!).find((id) => id.startsWith('SOL:'))!;
 

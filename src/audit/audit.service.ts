@@ -39,7 +39,8 @@ export interface AuditEntry {
   actorType: ActorType;
   actorId?: string | null;
   actorName?: string | null;
-  action: AuditAction | string;
+  /** Preferir las constantes de AUDIT_ACTIONS; se acepta texto libre por extensibilidad. */
+  action: string;
   entity: string;
   entityId?: string | null;
   before?: Prisma.InputJsonValue | null;
@@ -85,15 +86,12 @@ export class AuditService {
 
   /** Atajo para acciones ejecutadas por el propio sistema (cron, auto-resolución). */
   async recordSystem(
-    action: AuditAction | string,
+    action: string,
     entity: string,
     entityId: string | null,
     metadata?: Prisma.InputJsonValue,
     tx?: Prisma.TransactionClient,
   ): Promise<void> {
-    await this.record(
-      { actorType: ActorType.SYSTEM, action, entity, entityId, metadata },
-      tx,
-    );
+    await this.record({ actorType: ActorType.SYSTEM, action, entity, entityId, metadata }, tx);
   }
 }

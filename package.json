@@ -22,7 +22,8 @@
     "prisma:studio": "prisma studio",
     "seed": "ts-node prisma/seed.ts",
     "test:int": "jest --config ./test/jest-int.json",
-    "test:all": "jest && jest --config ./test/jest-int.json"
+    "test:all": "jest && jest --config ./test/jest-int.json",
+    "simulate": "ts-node src/cli/simulate-time.ts"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

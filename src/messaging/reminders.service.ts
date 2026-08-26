@@ -92,11 +92,7 @@ export class RemindersService {
     return this.time.toDateColumn(target);
   }
 
-  private async remindFor(
-    location: Location,
-    date: Date,
-    weekend: boolean,
-  ): Promise<number> {
+  private async remindFor(location: Location, date: Date, weekend: boolean): Promise<number> {
     const assignments = await this.prisma.assignment.findMany({
       where: {
         // Quien ya confirmó no necesita que se le vuelva a preguntar.

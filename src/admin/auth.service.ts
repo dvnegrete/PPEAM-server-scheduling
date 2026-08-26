@@ -23,7 +23,8 @@ export class AdminAuthService {
 
     // Se compara siempre contra un hash para que el tiempo de respuesta no
     // revele si el correo existe.
-    const hash = user?.passwordHash ?? '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidi';
+    const hash =
+      user?.passwordHash ?? '$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinvalidi';
     const valid = await bcrypt.compare(password, hash);
 
     if (!user || !user.active || !valid) {

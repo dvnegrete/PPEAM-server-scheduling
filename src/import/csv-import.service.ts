@@ -1,15 +1,10 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActorType, ParticipantRole } from '@prisma/client';
+import { ActorType } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
 import { PrismaService } from '../prisma/prisma.service';
-import {
-  emptyResult,
-  ImportResult,
-  ROLE_BY_NAME,
-  WEEKDAY_BY_NAME,
-} from './import.types';
+import { emptyResult, ImportResult, ROLE_BY_NAME, WEEKDAY_BY_NAME } from './import.types';
 
 interface ImportOptions {
   locationId: string;
@@ -77,7 +72,7 @@ export class CsvImportService {
         });
         continue;
       }
-      const role = (ROLE_BY_NAME[roleRaw] ?? 'PARTICIPANT') as ParticipantRole;
+      const role = ROLE_BY_NAME[roleRaw] ?? 'PARTICIPANT';
 
       const alertsRaw = (row.alertas ?? row.alerts ?? '').trim().toLowerCase();
       const coverageAlerts = alertsRaw === '' ? true : !['no', 'false', '0'].includes(alertsRaw);
@@ -272,7 +267,7 @@ export class CsvImportService {
     try {
       return parse(csv, {
         columns: (header: string[]) =>
-          header.map((column) => column.trim().toLowerCase().replace(/^﻿/, '')),
+          header.map((column) => column.trim().toLowerCase().replace(/^/, '')),
         skip_empty_lines: true,
         trim: true,
         bom: true,

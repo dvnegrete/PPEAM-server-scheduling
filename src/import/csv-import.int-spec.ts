@@ -128,11 +128,7 @@ describe('Importación desde CSV (integración)', () => {
         { locationId },
       );
 
-      const csv = [
-        'telefono,dia,inicio',
-        '5512345678,lunes,7:00',
-        '5512345679,lunes,7',
-      ].join('\n');
+      const csv = ['telefono,dia,inicio', '5512345678,lunes,7:00', '5512345679,lunes,7'].join('\n');
 
       const result = await importer.importRecurringAssignments(csv, { locationId });
 

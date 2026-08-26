@@ -46,13 +46,19 @@ describe('WebhookParser', () => {
             id: 'wamid.boton',
             from: '5215512345678',
             type: 'interactive',
-            interactive: { type: 'button_reply', button_reply: { id: 'CANCELAR', title: 'Cancelar' } },
+            interactive: {
+              type: 'button_reply',
+              button_reply: { id: 'CANCELAR', title: 'Cancelar' },
+            },
           },
           {
             id: 'wamid.lista',
             from: '5215512345678',
             type: 'interactive',
-            interactive: { type: 'list_reply', list_reply: { id: 'TURNO:abc', title: 'jueves 7:00' } },
+            interactive: {
+              type: 'list_reply',
+              list_reply: { id: 'TURNO:abc', title: 'jueves 7:00' },
+            },
           },
           {
             id: 'wamid.plantilla',

@@ -3,7 +3,11 @@ import { Cron, CronExpression } from '@nestjs/schedule';
 import { OutboxStatus, Prisma } from '@prisma/client';
 import { AppConfigService } from '../config/app-config.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { WHATSAPP_CLIENT, WhatsAppClient, WhatsAppSendError } from './clients/whatsapp-client.interface';
+import {
+  WHATSAPP_CLIENT,
+  WhatsAppClient,
+  WhatsAppSendError,
+} from './clients/whatsapp-client.interface';
 import { OutgoingMessage } from './types/message.types';
 
 const BATCH_SIZE = 20;
@@ -132,13 +136,18 @@ export class OutboxWorker {
     });
   }
 
+  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'outbox-unstick' })
+  async unstickScheduled(): Promise<void> {
+    if (this.config.isTest) return;
+    await this.requeueStuck();
+  }
+
   /**
    * Devuelve a la cola los mensajes que quedaron en SENDING porque el proceso
    * murió a media entrega. Sin esto, un reinicio dejaría avisos sin enviar.
+   * Público para poder invocarlo desde pruebas y desde el simulador de tiempo.
    */
-  @Cron(CronExpression.EVERY_5_MINUTES, { name: 'outbox-unstick' })
-  async requeueStuck(): Promise<void> {
-    if (this.config.isTest) return;
+  async requeueStuck(): Promise<number> {
     const threshold = new Date(Date.now() - STUCK_AFTER_MINUTES * 60_000);
     const { count } = await this.prisma.outboxMessage.updateMany({
       where: { status: OutboxStatus.SENDING, updatedAt: { lt: threshold } },
@@ -147,5 +156,6 @@ export class OutboxWorker {
     if (count > 0) {
       this.logger.warn(`Se devolvieron a la cola ${count} mensaje(s) atorados en envío`);
     }
+    return count;
   }
 }

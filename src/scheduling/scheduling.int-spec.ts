@@ -1,10 +1,10 @@
-import { AssignmentStatus, CoverageOfferStatus, CoverageRequestStatus, ShiftStatus } from '@prisma/client';
 import {
-  createLocation,
-  createParticipant,
-  createShift,
-  TZ,
-} from '../../test/helpers/fixtures';
+  AssignmentStatus,
+  CoverageOfferStatus,
+  CoverageRequestStatus,
+  ShiftStatus,
+} from '@prisma/client';
+import { createLocation, createParticipant, createShift, TZ } from '../../test/helpers/fixtures';
 import { createTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { DOMAIN_EVENTS } from '../events/domain-events';
 import { AssignmentsService } from './assignments.service';
@@ -232,7 +232,7 @@ describe('Motor de turnos (integración)', () => {
         where: { shiftId: shift.id, participantId: ana.id },
       });
 
-      const lowStaff = jest.fn();
+      const lowStaff = jest.fn<void, [Record<string, unknown>]>();
       ctx.events.on(DOMAIN_EVENTS.SHIFT_LOW_STAFF, lowStaff);
 
       await assignments.cancel({ assignmentId: assignment.id });
@@ -324,7 +324,7 @@ describe('Motor de turnos (integración)', () => {
         where: { participantId: dora.id },
       });
 
-      const fulfilled = jest.fn();
+      const fulfilled = jest.fn<void, [{ notSelectedParticipantIds: string[] }]>();
       ctx.events.on(DOMAIN_EVENTS.COVERAGE_FULFILLED, fulfilled);
 
       await coverage.approve(primerOfrecimiento.id, encargado.id);
@@ -378,9 +378,7 @@ describe('Motor de turnos (integración)', () => {
         data: { closesAt: new Date('2026-08-25T17:00:00.000Z') },
       });
 
-      await expect(coverage.offer(request.id, dora.id)).rejects.toThrow(
-        CoverageUnavailableError,
-      );
+      await expect(coverage.offer(request.id, dora.id)).rejects.toThrow(CoverageUnavailableError);
     });
 
     it('cierra las vacantes vencidas y expira sus ofrecimientos', async () => {

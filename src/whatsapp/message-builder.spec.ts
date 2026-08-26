@@ -43,9 +43,9 @@ describe('MessageBuilder', () => {
   });
 
   it('exige contenido en los mensajes interactivos', () => {
-    expect(() =>
-      MessageBuilder.buttons({ to: '+52', body: 'x', buttons: [] }),
-    ).toThrow(/al menos uno/);
+    expect(() => MessageBuilder.buttons({ to: '+52', body: 'x', buttons: [] })).toThrow(
+      /al menos uno/,
+    );
     expect(() =>
       MessageBuilder.list({ to: '+52', body: 'x', buttonLabel: 'Ver', sections: [] }),
     ).toThrow(/al menos una fila/);

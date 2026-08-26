@@ -63,10 +63,7 @@ export class PhoneService {
   private stripMexicanMobilePrefix(value: string): string {
     const digits = value.replace(/[^\d+]/g, '');
     const withoutPlus = digits.startsWith('+') ? digits.slice(1) : digits;
-    if (
-      withoutPlus.startsWith(PhoneService.MEXICO_LEGACY_PREFIX) &&
-      withoutPlus.length === 13
-    ) {
+    if (withoutPlus.startsWith(PhoneService.MEXICO_LEGACY_PREFIX) && withoutPlus.length === 13) {
       return `+52${withoutPlus.slice(3)}`;
     }
     return digits.startsWith('+') ? digits : `+${withoutPlus}`.replace(/^\+(?=\d{10}$)/, '');

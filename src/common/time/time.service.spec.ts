@@ -34,9 +34,7 @@ describe('TimeService', () => {
   describe('occurrencesInMonth', () => {
     it('devuelve todas las ocurrencias cuando no se filtra por ordinal', () => {
       // Agosto 2026 tiene sábados los días 1, 8, 15, 22 y 29.
-      const days = service
-        .occurrencesInMonth(2026, 8, 6, EVERY_WEEK, TZ)
-        .map((dt) => dt.day);
+      const days = service.occurrencesInMonth(2026, 8, 6, EVERY_WEEK, TZ).map((dt) => dt.day);
       expect(days).toEqual([1, 8, 15, 22, 29]);
     });
 

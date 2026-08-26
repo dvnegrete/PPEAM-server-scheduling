@@ -223,19 +223,13 @@ export class ConversationService {
       include: { shift: { include: { location: true } } },
     });
     if (!assignment || assignment.participantId !== participant.id) {
-      await this.reply(
-        participant.id,
-        this.composer.notUnderstood(participant.phoneE164),
-      );
+      await this.reply(participant.id, this.composer.notUnderstood(participant.phoneE164));
       return;
     }
 
-    await this.sessions.set(
-      participant.id,
-      locationId,
-      SESSION_STATES.AWAITING_CANCEL_CONFIRM,
-      { assignmentId },
-    );
+    await this.sessions.set(participant.id, locationId, SESSION_STATES.AWAITING_CANCEL_CONFIRM, {
+      assignmentId,
+    });
 
     await this.reply(
       participant.id,
@@ -326,12 +320,10 @@ export class ConversationService {
 
     try {
       await this.coverage.offer(coverageRequestId, participant.id);
-      await this.reply(
-        participant.id,
-        this.composer.offerReceived(participant.phoneE164, label),
-      );
+      await this.reply(participant.id, this.composer.offerReceived(participant.phoneE164, label));
     } catch (error) {
-      const detail = error instanceof Error ? error.message : 'No se pudo registrar tu ofrecimiento';
+      const detail =
+        error instanceof Error ? error.message : 'No se pudo registrar tu ofrecimiento';
       await this.reply(
         participant.id,
         this.composer.taskResolvedByYou(participant.phoneE164, detail),

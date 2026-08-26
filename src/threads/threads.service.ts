@@ -3,11 +3,7 @@ import { ActorType, ThreadDirection, ThreadStatus } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { TimeService } from '../common/time/time.service';
 import { DomainEventBus } from '../events/domain-event-bus';
-import {
-  DOMAIN_EVENTS,
-  QuestionAnsweredEvent,
-  QuestionAskedEvent,
-} from '../events/domain-events';
+import { DOMAIN_EVENTS, QuestionAnsweredEvent, QuestionAskedEvent } from '../events/domain-events';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**

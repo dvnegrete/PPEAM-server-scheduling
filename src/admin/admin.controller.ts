@@ -25,7 +25,6 @@ import {
 } from './admin.dto';
 import { AdminAuthService } from './auth.service';
 import { ROLE_BY_NAME } from '../import/import.types';
-import { ParticipantRole } from '@prisma/client';
 
 @Controller('api/admin')
 export class AdminController {
@@ -89,7 +88,7 @@ export class AdminController {
       fullName: dto.fullName,
       phone: dto.phone,
       locationId: id,
-      role: role as ParticipantRole | undefined,
+      role: role,
     });
   }
 
@@ -133,11 +132,7 @@ export class AdminController {
 
   @Get('locations/:id/reports/attendance')
   @UseGuards(AdminAuthGuard)
-  attendance(
-    @Param('id') id: string,
-    @Query('from') from: string,
-    @Query('to') to: string,
-  ) {
+  attendance(@Param('id') id: string, @Query('from') from: string, @Query('to') to: string) {
     return this.reports.attendance(id, new Date(from), new Date(to));
   }
 
