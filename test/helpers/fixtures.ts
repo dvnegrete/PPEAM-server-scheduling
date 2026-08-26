@@ -1,4 +1,5 @@
 import { AssignmentOrigin, AssignmentStatus, ParticipantRole, ShiftStatus } from '@prisma/client';
+import { DateTime } from 'luxon';
 import { PrismaService } from '../../src/prisma/prisma.service';
 
 export const TZ = 'America/Mexico_City';
@@ -56,10 +57,13 @@ export async function createShift(
   },
 ) {
   const startMinute = params.startMinute ?? 7 * 60;
+  // La fecha local se deriva de `startsAt` para que la etiqueta que ve el
+  // participante y el instante del turno nunca se contradigan.
+  const local = DateTime.fromJSDate(params.startsAt, { zone: TZ });
   const shift = await prisma.shift.create({
     data: {
       locationId,
-      date: params.date ?? new Date(Date.UTC(2026, 7, 27)),
+      date: params.date ?? new Date(Date.UTC(local.year, local.month - 1, local.day)),
       startMinute,
       endMinute: params.endMinute ?? startMinute + 120,
       startsAt: params.startsAt,

@@ -274,7 +274,9 @@ describe('Conversación por WhatsApp de extremo a extremo (integración)', () =>
       bodyOf(m).includes('¿Dónde se guarda el exhibidor?'),
     );
     expect(aviso).toBeDefined();
-    const responder = optionIds(aviso!).find((id) => id.startsWith('RESPONDER:'))!;
+    // La plantilla lleva el botón que abre la solicitud; abrir una pregunta
+    // es justamente pasar a redactar la respuesta.
+    const responder = optionIds(aviso!).find((id) => id.startsWith('SOL:'))!;
 
     await inbound.ingest([replyFrom(elena.phoneE164, responder)], []);
     expect(bodyOf(await lastMessageFor(elena.phoneE164))).toContain('Escribe tu respuesta');

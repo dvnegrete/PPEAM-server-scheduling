@@ -5,6 +5,7 @@ import { ConversationWindowService } from './conversation-window.service';
 import { MessageComposer } from './message-composer';
 import { NotificationListeners } from './notification.listeners';
 import { NotificationService } from './notification.service';
+import { RemindersService } from './reminders.service';
 
 @Module({
   imports: [SchedulingModule, SupervisorsModule],
@@ -13,7 +14,8 @@ import { NotificationService } from './notification.service';
     ConversationWindowService,
     NotificationService,
     NotificationListeners,
+    RemindersService,
   ],
-  exports: [MessageComposer, ConversationWindowService, NotificationService],
+  exports: [MessageComposer, ConversationWindowService, NotificationService, RemindersService],
 })
 export class MessagingModule {}
