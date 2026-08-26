@@ -98,5 +98,8 @@
     "setupFiles": [
       "<rootDir>/test/setup-env.ts"
     ]
+  },
+  "overrides": {
+    "deepmerge-ts": "^8.0.0"
   }
 }

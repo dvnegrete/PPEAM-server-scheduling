@@ -4,6 +4,7 @@ import { AppConfigService } from '../config/app-config.service';
 import { ImportModule } from '../import/import.module';
 import { ReportsModule } from '../reports/reports.module';
 import { SchedulingModule } from '../scheduling/scheduling.module';
+import { SupervisorsModule } from '../supervisors/supervisors.module';
 import { AdminAuthGuard } from './admin-auth.guard';
 import { AdminController } from './admin.controller';
 import { AdminAuthService } from './auth.service';
@@ -13,6 +14,7 @@ import { AdminAuthService } from './auth.service';
     ImportModule,
     ReportsModule,
     SchedulingModule,
+    SupervisorsModule,
     JwtModule.registerAsync({
       inject: [AppConfigService],
       useFactory: (config: AppConfigService) => ({

@@ -57,6 +57,26 @@ export class CreateParticipantDto {
   role?: string;
 }
 
+export class CreateWindowDto {
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(6)
+  weekday!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1439)
+  startMinute!: number;
+
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(1440)
+  endMinute!: number;
+}
+
 export class UpdateSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) urgentWindowHours?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) supervisorTimeoutMinutes?: number;

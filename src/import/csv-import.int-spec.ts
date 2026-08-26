@@ -111,6 +111,34 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors[0].message).toContain('Rol desconocido');
     });
 
+    it('registra el consentimiento declarado al importar el padrón', async () => {
+      // Sin este registro no se les podría avisar de ninguna vacante: para
+      // escribirles tendrían que haber escrito antes.
+      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.optInAt).not.toBeNull();
+    });
+
+    it('respeta a quien no dio consentimiento', async () => {
+      await importer.importParticipants('nombre,telefono,consentimiento\nAna López,5512345678,no', {
+        locationId,
+      });
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.optInAt).toBeNull();
+    });
+
+    it('conserva la fecha original del consentimiento al reimportar', async () => {
+      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      const primera = await ctx.prisma.participant.findFirstOrThrow();
+
+      await importer.importParticipants('nombre,telefono\nAna L.,5512345678', { locationId });
+      const segunda = await ctx.prisma.participant.findFirstOrThrow();
+
+      expect(segunda.optInAt?.getTime()).toBe(primera.optInAt?.getTime());
+    });
+
     it('respeta la preferencia de avisos de vacantes', async () => {
       const csv = 'nombre,telefono,alertas\nAna López,5512345678,no';
       await importer.importParticipants(csv, { locationId });

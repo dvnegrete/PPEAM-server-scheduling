@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Param,
@@ -18,12 +19,14 @@ import { ScheduleGeneratorService } from '../scheduling/schedule-generator.servi
 import { AdminAuthGuard } from './admin-auth.guard';
 import {
   CreateParticipantDto,
+  CreateWindowDto,
   ImportDto,
   LoginDto,
   MonthQueryDto,
   UpdateSettingsDto,
 } from './admin.dto';
 import { AdminAuthService } from './auth.service';
+import { SupervisorsService } from '../supervisors/supervisors.service';
 import { ROLE_BY_NAME } from '../import/import.types';
 
 @Controller('api/admin')
@@ -36,6 +39,7 @@ export class AdminController {
     private readonly reports: ReportsService,
     private readonly generator: ScheduleGeneratorService,
     private readonly participants: ParticipantsService,
+    private readonly supervisors: SupervisorsService,
   ) {}
 
   @Post('login')
@@ -110,6 +114,57 @@ export class AdminController {
       locationId: id,
       dryRun: dto.dryRun ?? false,
     });
+  }
+
+  /** Encargados del punto con sus franjas de guardia y su estado actual. */
+  @Get('locations/:id/supervisors')
+  @UseGuards(AdminAuthGuard)
+  async supervisorsOf(@Param('id') id: string) {
+    const supervisors = await this.supervisors.allSupervisors(id);
+    const onDuty = new Set((await this.supervisors.onDutyNow(id)).map((item) => item.id));
+
+    return Promise.all(
+      supervisors.map(async (supervisor) => {
+        const status = await this.supervisors.dutyStatus(supervisor.id, id);
+        return {
+          id: supervisor.id,
+          fullName: supervisor.fullName,
+          phoneE164: supervisor.phoneE164,
+          onDuty: onDuty.has(supervisor.id),
+          overrideActive: status.overrideActive,
+          available: status.presence?.available ?? null,
+          windows: status.windows.map((window) => ({
+            id: window.id,
+            weekday: window.weekday,
+            startMinute: window.startMinute,
+            endMinute: window.endMinute,
+          })),
+        };
+      }),
+    );
+  }
+
+  @Post('locations/:id/supervisors/:participantId/windows')
+  @UseGuards(AdminAuthGuard)
+  addWindow(
+    @Param('id') id: string,
+    @Param('participantId') participantId: string,
+    @Body() dto: CreateWindowDto,
+  ) {
+    return this.supervisors.addWindow(
+      participantId,
+      id,
+      dto.weekday,
+      dto.startMinute,
+      dto.endMinute,
+    );
+  }
+
+  @Delete('supervisors/windows/:windowId')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(204)
+  removeWindow(@Param('windowId') windowId: string) {
+    return this.supervisors.removeWindow(windowId);
   }
 
   @Get('locations/:id/settings')

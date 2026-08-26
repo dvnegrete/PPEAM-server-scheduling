@@ -3,6 +3,7 @@ import { ActorType } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
+import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { emptyResult, ImportResult, ROLE_BY_NAME, WEEKDAY_BY_NAME } from './import.types';
 
@@ -26,12 +27,20 @@ export class CsvImportService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly phone: PhoneService,
+    private readonly time: TimeService,
     private readonly audit: AuditService,
   ) {}
 
   /**
    * Padrón de participantes.
-   * Columnas: `nombre`, `telefono`, y opcionalmente `rol` y `alertas`.
+   * Columnas: `nombre`, `telefono`, y opcionalmente `rol`, `alertas` y `consentimiento`.
+   *
+   * Sobre el consentimiento: la política de Meta exige poder demostrar que la
+   * persona aceptó recibir mensajes, no que haya escrito primero por WhatsApp.
+   * Al importar el padrón, el administrador declara que quienes vienen en el
+   * archivo ya participan y aceptaron; sin ese registro no se les podría avisar
+   * de una sola vacante, porque para escribir tendrían que haber escrito antes.
+   * Quien no lo haya dado se marca con `consentimiento` en `no`.
    */
   async importParticipants(csv: string, options: ImportOptions): Promise<ImportResult> {
     const result = emptyResult(options.dryRun ?? false);
@@ -77,6 +86,9 @@ export class CsvImportService {
       const alertsRaw = (row.alertas ?? row.alerts ?? '').trim().toLowerCase();
       const coverageAlerts = alertsRaw === '' ? true : !['no', 'false', '0'].includes(alertsRaw);
 
+      const consentRaw = (row.consentimiento ?? row.consent ?? '').trim().toLowerCase();
+      const hasConsent = consentRaw === '' ? true : !['no', 'false', '0'].includes(consentRaw);
+
       if (options.dryRun) {
         const exists = await this.prisma.participant.findFirst({
           where: { phoneE164: { in: this.phone.lookupVariants(phoneE164) } },
@@ -93,7 +105,14 @@ export class CsvImportService {
       if (existing) {
         await this.prisma.participant.update({
           where: { id: existing.id },
-          data: { fullName, role, coverageAlerts },
+          data: {
+            fullName,
+            role,
+            coverageAlerts,
+            // Un consentimiento ya registrado no se sobrescribe con la fecha de
+            // una reimportación: interesa cuándo se obtuvo por primera vez.
+            optInAt: hasConsent ? (existing.optInAt ?? this.time.now()) : null,
+          },
         });
         await this.prisma.locationMembership.upsert({
           where: {
@@ -115,6 +134,7 @@ export class CsvImportService {
           phoneE164,
           role,
           coverageAlerts,
+          optInAt: hasConsent ? this.time.now() : null,
           memberships: { create: { locationId: options.locationId } },
         },
       });
