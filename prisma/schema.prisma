@@ -1,0 +1,650 @@
+// Sistema de horarios por WhatsApp para puntos de exhibición.
+//
+// Convenciones de tiempo:
+//   - Las horas del día se guardan como minutos desde medianoche (Int) en hora
+//     LOCAL del punto de exhibición: 7:00 => 420, 17:00 => 1020.
+//   - `Shift.startsAt` / `endsAt` son los mismos instantes ya resueltos a UTC,
+//     y son los que se usan para ordenar, comparar y calcular urgencia.
+//   - Todo `DateTime` sin sufijo local es UTC.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum ParticipantStatus {
+  ACTIVE
+  PAUSED
+  INACTIVE
+}
+
+enum ParticipantRole {
+  PARTICIPANT
+  SUPERVISOR
+  ADMIN
+}
+
+enum ShiftStatus {
+  PLANNED
+  OPEN
+  FULL
+  CANCELLED
+}
+
+enum AssignmentOrigin {
+  FIXED
+  SIGNUP
+  COVERAGE
+  MANUAL
+}
+
+enum AssignmentStatus {
+  ASSIGNED
+  CONFIRMED
+  CANCELLED
+  NO_SHOW
+}
+
+enum CoverageRequestStatus {
+  OPEN
+  FULFILLED
+  CANCELLED
+  EXPIRED
+}
+
+enum CoverageOfferStatus {
+  PENDING
+  APPROVED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum SupervisorTaskType {
+  COVERAGE_APPROVAL
+  CANCELLATION_NOTICE
+  LOW_STAFF_ALERT
+  QUESTION
+  SIGNUP_REQUEST
+}
+
+enum SupervisorTaskStatus {
+  PENDING
+  CLAIMED
+  RESOLVED
+  AUTO_RESOLVED
+  CANCELLED
+}
+
+enum OutboxKind {
+  TEXT
+  INTERACTIVE
+  TEMPLATE
+}
+
+enum OutboxStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+  CANCELLED
+}
+
+enum ThreadStatus {
+  OPEN
+  ANSWERED
+  CLOSED
+}
+
+enum ThreadDirection {
+  FROM_PARTICIPANT
+  FROM_SUPERVISOR
+}
+
+enum ActorType {
+  PARTICIPANT
+  SUPERVISOR
+  ADMIN
+  SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Punto de exhibición
+// ---------------------------------------------------------------------------
+
+model Location {
+  id       String  @id @default(cuid())
+  name     String
+  address  String?
+  timezone String  @default("America/Mexico_City")
+
+  /// Cupo por defecto de cada turno; el mínimo operativo dispara alertas.
+  defaultCapacity Int @default(3) @map("default_capacity")
+  minCapacity     Int @default(2) @map("min_capacity")
+  maxCapacity     Int @default(4) @map("max_capacity")
+
+  active Boolean @default(true)
+
+  /// Parámetros ajustables sin migración (ver LocationSettings en el código):
+  /// ventana de urgencia, timeout del encargado, horas de recordatorio, etc.
+  settings Json @default("{}")
+
+  /// JID del grupo de WhatsApp donde se publica el calendario (Fase 2, Baileys).
+  whatsappGroupJid String? @map("whatsapp_group_jid")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships       LocationMembership[]
+  shiftTemplates    ShiftTemplate[]
+  shifts            Shift[]
+  supervisorWindows SupervisorWindow[]
+  supervisorTasks   SupervisorTask[]
+  questionThreads   QuestionThread[]
+
+  @@map("locations")
+}
+
+// ---------------------------------------------------------------------------
+// Personas
+// ---------------------------------------------------------------------------
+
+model Participant {
+  id          String  @id @default(cuid())
+  fullName    String  @map("full_name")
+  displayName String? @map("display_name")
+
+  /// Teléfono normalizado a E.164 (+52...). Es la llave natural en WhatsApp.
+  phoneE164 String @unique @map("phone_e164")
+
+  status ParticipantStatus @default(ACTIVE)
+  role   ParticipantRole   @default(PARTICIPANT)
+
+  /// Si acepta recibir avisos de vacantes por DM.
+  coverageAlerts Boolean @default(true) @map("coverage_alerts")
+
+  /// Momento en que aceptó recibir mensajes (requisito de política de Meta).
+  optInAt DateTime? @map("opt_in_at")
+
+  notes String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  memberships          LocationMembership[]
+  recurringAssignments RecurringAssignment[]
+  assignments          Assignment[]
+  coverageOffers       CoverageOffer[]
+  supervisorWindows    SupervisorWindow[]
+  presence             SupervisorPresence?
+  session              ConversationSession?
+  questionThreads      QuestionThread[]
+  threadMessages       ThreadMessage[]
+  outboxMessages       OutboxMessage[]
+  inboundMessages      InboundMessage[]
+  requestedTasks       SupervisorTask[]      @relation("TaskRequester")
+  claimedTasks         SupervisorTask[]      @relation("TaskClaimer")
+  resolvedTasks        SupervisorTask[]      @relation("TaskResolver")
+  decidedOffers        CoverageOffer[]       @relation("OfferDecider")
+
+  @@index([status])
+  @@map("participants")
+}
+
+/// Pertenencia de un participante a un punto de exhibición (soporta varios puntos).
+model LocationMembership {
+  id            String @id @default(cuid())
+  locationId    String @map("location_id")
+  participantId String @map("participant_id")
+
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  location    Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([locationId, participantId])
+  @@map("location_memberships")
+}
+
+// ---------------------------------------------------------------------------
+// Calendario: plantillas de recurrencia y ocurrencias materializadas
+// ---------------------------------------------------------------------------
+
+/// Regla de recurrencia de un turno.
+///   weekOfMonth = 0    -> ocurre todas las semanas (uso típico: lunes a viernes)
+///   weekOfMonth = 1..5 -> solo en esa ocurrencia del mes, calculada como
+///                         floor((díaDelMes - 1) / 7) + 1 (uso típico: sábado y domingo)
+///
+/// Se usa 0 en lugar de NULL a propósito: en PostgreSQL dos filas con NULL no
+/// colisionan en un índice UNIQUE, así que un NULL aquí permitiría plantillas
+/// duplicadas para el mismo día y hora.
+model ShiftTemplate {
+  id         String @id @default(cuid())
+  locationId String @map("location_id")
+
+  /// 0 = domingo ... 6 = sábado (compatible con Date#getDay).
+  weekday Int
+
+  /// Minutos desde medianoche, hora local del punto.
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  capacity    Int     @default(3)
+  weekOfMonth Int     @default(0) @map("week_of_month")
+  active      Boolean @default(true)
+
+  /// Si es false, los lugares sin titular fijo se publican para inscripción
+  /// (caso del 5.º sábado/domingo del mes).
+  autoFillOnly Boolean @default(true) @map("auto_fill_only")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  location             Location              @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  recurringAssignments RecurringAssignment[]
+  shifts               Shift[]
+
+  @@unique([locationId, weekday, startMinute, weekOfMonth])
+  @@index([locationId, active])
+  @@map("shift_templates")
+}
+
+/// Participante fijo en una plantilla (su turno habitual).
+model RecurringAssignment {
+  id              String @id @default(cuid())
+  shiftTemplateId String @map("shift_template_id")
+  participantId   String @map("participant_id")
+
+  active   Boolean   @default(true)
+  startsOn DateTime? @map("starts_on") @db.Date
+  endsOn   DateTime? @map("ends_on") @db.Date
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  shiftTemplate ShiftTemplate @relation(fields: [shiftTemplateId], references: [id], onDelete: Cascade)
+  participant   Participant   @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftTemplateId, participantId])
+  @@map("recurring_assignments")
+}
+
+/// Ocurrencia real de un turno en una fecha concreta.
+model Shift {
+  id         String  @id @default(cuid())
+  locationId String  @map("location_id")
+  templateId String? @map("template_id")
+
+  /// Fecha local del punto (sin hora).
+  date DateTime @db.Date
+
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  /// Instantes absolutos ya resueltos con la zona horaria del punto.
+  startsAt DateTime @map("starts_at")
+  endsAt   DateTime @map("ends_at")
+
+  capacity    Int
+  weekOfMonth Int         @map("week_of_month")
+  status      ShiftStatus @default(PLANNED)
+
+  cancelledAt     DateTime? @map("cancelled_at")
+  cancelledReason String?   @map("cancelled_reason")
+  notes           String?
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  location         Location          @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  template         ShiftTemplate?    @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  assignments      Assignment[]
+  coverageRequests CoverageRequest[]
+  supervisorTasks  SupervisorTask[]
+
+  @@unique([locationId, date, startMinute])
+  @@index([locationId, startsAt])
+  @@index([status, startsAt])
+  @@map("shifts")
+}
+
+/// Lugar ocupado por un participante en un turno concreto.
+/// La fila se reutiliza si alguien cancela y luego vuelve a tomar el mismo turno;
+/// el historial completo de esos cambios vive en AuditLog.
+model Assignment {
+  id            String @id @default(cuid())
+  shiftId       String @map("shift_id")
+  participantId String @map("participant_id")
+
+  origin AssignmentOrigin @default(FIXED)
+  status AssignmentStatus @default(ASSIGNED)
+
+  confirmedAt  DateTime? @map("confirmed_at")
+  cancelledAt  DateTime? @map("cancelled_at")
+  cancelReason String?   @map("cancel_reason")
+
+  /// Última vez que se le envió recordatorio, para no duplicar envíos.
+  remindedAt DateTime? @map("reminded_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shift       Shift       @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@unique([shiftId, participantId])
+  @@index([participantId, status])
+  @@index([shiftId, status])
+  @@map("assignments")
+}
+
+// ---------------------------------------------------------------------------
+// Vacantes y coberturas
+// ---------------------------------------------------------------------------
+
+model CoverageRequest {
+  id      String @id @default(cuid())
+  shiftId String @map("shift_id")
+
+  slotsNeeded Int @default(1) @map("slots_needed")
+  slotsFilled Int @default(0) @map("slots_filled")
+
+  status CoverageRequestStatus @default(OPEN)
+
+  /// Se marca urgente cuando el turno cae dentro de la ventana configurada.
+  urgent Boolean @default(false)
+
+  publishedAt    DateTime? @map("published_at")
+  broadcastCount Int       @default(0) @map("broadcast_count")
+
+  /// A partir de este instante la vacante deja de aceptar ofrecimientos.
+  closesAt DateTime @map("closes_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  shift  Shift           @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  offers CoverageOffer[]
+
+  @@index([status, closesAt])
+  @@index([shiftId, status])
+  @@map("coverage_requests")
+}
+
+model CoverageOffer {
+  id                String @id @default(cuid())
+  coverageRequestId String @map("coverage_request_id")
+  participantId     String @map("participant_id")
+
+  /// El orden de llegada es el criterio de desempate al aprobar.
+  offeredAt DateTime            @default(now()) @map("offered_at")
+  status    CoverageOfferStatus @default(PENDING)
+
+  decidedAt   DateTime? @map("decided_at")
+  decidedById String?   @map("decided_by_id")
+
+  coverageRequest CoverageRequest @relation(fields: [coverageRequestId], references: [id], onDelete: Cascade)
+  participant     Participant     @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  decidedBy       Participant?    @relation("OfferDecider", fields: [decidedById], references: [id], onDelete: SetNull)
+
+  @@unique([coverageRequestId, participantId])
+  @@index([coverageRequestId, status, offeredAt])
+  @@map("coverage_offers")
+}
+
+// ---------------------------------------------------------------------------
+// Encargados: guardia y cola de trabajo
+// ---------------------------------------------------------------------------
+
+/// Franja habitual de guardia de un encargado (hora local del punto).
+model SupervisorWindow {
+  id            String @id @default(cuid())
+  participantId String @map("participant_id")
+  locationId    String @map("location_id")
+
+  weekday     Int
+  startMinute Int @map("start_minute")
+  endMinute   Int @map("end_minute")
+
+  active Boolean @default(true)
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  location    Location    @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([participantId, locationId, weekday, startMinute])
+  @@index([locationId, weekday, active])
+  @@map("supervisor_windows")
+}
+
+/// Override manual: "estoy disponible" / "no disponible hasta las 18:00".
+/// Tiene prioridad sobre las franjas fijas mientras no expire.
+model SupervisorPresence {
+  id            String @id @default(cuid())
+  participantId String @unique @map("participant_id")
+
+  available Boolean
+  until     DateTime?
+
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@map("supervisor_presence")
+}
+
+/// Unidad de trabajo dirigida a los encargados de guardia.
+model SupervisorTask {
+  id         String @id @default(cuid())
+  locationId String @map("location_id")
+
+  type   SupervisorTaskType
+  status SupervisorTaskStatus @default(PENDING)
+
+  /// Datos suficientes para renderizar el mensaje sin recalcular nada.
+  payload Json @default("{}")
+
+  urgent Boolean @default(false)
+
+  shiftId           String? @map("shift_id")
+  coverageRequestId String? @map("coverage_request_id")
+  threadId          String? @map("thread_id")
+  requesterId       String? @map("requester_id")
+
+  claimedById String?   @map("claimed_by_id")
+  claimedAt   DateTime? @map("claimed_at")
+
+  resolvedById String?   @map("resolved_by_id")
+  resolvedAt   DateTime? @map("resolved_at")
+  resolution   String?
+
+  /// Vencimiento del plazo de atención; al pasarlo se escala o se auto-resuelve.
+  dueAt          DateTime  @map("due_at")
+  autoResolvedAt DateTime? @map("auto_resolved_at")
+
+  /// Veces que se ha difundido a los encargados (evita spam en reintentos).
+  notifiedCount Int @default(0) @map("notified_count")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  location   Location        @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  shift      Shift?          @relation(fields: [shiftId], references: [id], onDelete: SetNull)
+  thread     QuestionThread? @relation(fields: [threadId], references: [id], onDelete: SetNull)
+  requester  Participant?    @relation("TaskRequester", fields: [requesterId], references: [id], onDelete: SetNull)
+  claimedBy  Participant?    @relation("TaskClaimer", fields: [claimedById], references: [id], onDelete: SetNull)
+  resolvedBy Participant?    @relation("TaskResolver", fields: [resolvedById], references: [id], onDelete: SetNull)
+
+  @@index([status, dueAt])
+  @@index([locationId, status, type])
+  @@map("supervisor_tasks")
+}
+
+// ---------------------------------------------------------------------------
+// Preguntas libres (puente participante <-> encargado)
+// ---------------------------------------------------------------------------
+
+model QuestionThread {
+  id            String @id @default(cuid())
+  locationId    String @map("location_id")
+  participantId String @map("participant_id")
+
+  status  ThreadStatus @default(OPEN)
+  subject String?
+
+  lastMessageAt DateTime  @default(now()) @map("last_message_at")
+  closedAt      DateTime? @map("closed_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  location    Location         @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  participant Participant      @relation(fields: [participantId], references: [id], onDelete: Cascade)
+  messages    ThreadMessage[]
+  tasks       SupervisorTask[]
+
+  @@index([status, lastMessageAt])
+  @@map("question_threads")
+}
+
+model ThreadMessage {
+  id        String          @id @default(cuid())
+  threadId  String          @map("thread_id")
+  direction ThreadDirection
+
+  /// Quién escribió: el participante o el encargado que respondió.
+  authorId String? @map("author_id")
+  body     String
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  thread QuestionThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  author Participant?   @relation(fields: [authorId], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt])
+  @@map("thread_messages")
+}
+
+// ---------------------------------------------------------------------------
+// Mensajería
+// ---------------------------------------------------------------------------
+
+/// Outbox transaccional: el caso de uso guarda el cambio de estado y el mensaje
+/// en la misma transacción; el worker se encarga de entregarlo y reintentar.
+model OutboxMessage {
+  id            String  @id @default(cuid())
+  toPhone       String  @map("to_phone")
+  participantId String? @map("participant_id")
+
+  kind         OutboxKind
+  templateName String?    @map("template_name")
+
+  /// Cuerpo ya renderizado, listo para enviarse a la Cloud API.
+  payload Json
+
+  status        OutboxStatus @default(PENDING)
+  attempts      Int          @default(0)
+  nextAttemptAt DateTime     @default(now()) @map("next_attempt_at")
+  sentAt        DateTime?    @map("sent_at")
+  waMessageId   String?      @map("wa_message_id")
+  error         String?
+
+  /// Llave de idempotencia (p. ej. "reminder:<assignmentId>") para no duplicar envíos.
+  dedupeKey String? @unique @map("dedupe_key")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participant Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([status, nextAttemptAt])
+  @@map("outbox_messages")
+}
+
+/// Registro de entrada para idempotencia: Meta reintenta los webhooks.
+model InboundMessage {
+  id            String  @id @default(cuid())
+  waMessageId   String  @unique @map("wa_message_id")
+  fromPhone     String  @map("from_phone")
+  participantId String? @map("participant_id")
+
+  type    String
+  payload Json
+
+  receivedAt  DateTime  @default(now()) @map("received_at")
+  processedAt DateTime? @map("processed_at")
+  error       String?
+
+  participant Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
+  @@index([fromPhone, receivedAt])
+  @@map("inbound_messages")
+}
+
+/// Estado del flujo conversacional de cada persona (menús de varios pasos).
+model ConversationSession {
+  id            String @id @default(cuid())
+  participantId String @unique @map("participant_id")
+
+  state   String @default("IDLE")
+  context Json   @default("{}")
+
+  expiresAt DateTime @map("expires_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
+
+  @@index([expiresAt])
+  @@map("conversation_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Auditoría y panel
+// ---------------------------------------------------------------------------
+
+/// Bitácora de solo inserción. Es la fuente de verdad de "quién hizo qué".
+model AuditLog {
+  id String @id @default(cuid())
+
+  actorType ActorType @map("actor_type")
+  actorId   String?   @map("actor_id")
+  actorName String?   @map("actor_name")
+
+  action   String
+  entity   String
+  entityId String? @map("entity_id")
+
+  before   Json?
+  after    Json?
+  metadata Json?
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([entity, entityId, createdAt])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+/// Usuario del panel web (separado del padrón de WhatsApp).
+model AdminUser {
+  id           String  @id @default(cuid())
+  email        String  @unique
+  passwordHash String  @map("password_hash")
+  name         String
+  active       Boolean @default(true)
+
+  lastLoginAt DateTime? @map("last_login_at")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@map("admin_users")
+}

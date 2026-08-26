@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ppeam-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ppeam
+      POSTGRES_PASSWORD: ppeam
+      POSTGRES_DB: ppeam_schedules
+    ports:
+      - '5433:5432'
+    volumes:
+      - ppeam-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ppeam -d ppeam_schedules']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  ppeam-pgdata:
