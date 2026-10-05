@@ -10,7 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { displayName, PADRON_ORDER } from '../common/names/person-name';
+import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { CsvImportService } from '../import/csv-import.service';
 import { ParticipantsService } from '../participants/participants.service';
@@ -42,6 +42,7 @@ import {
 } from '../participants/organization-fields.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from '../reports/poll-draft.service';
+import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ActorType } from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
@@ -59,6 +60,7 @@ export class AdminController {
     private readonly assignments: AssignmentsService,
     private readonly pollDraft_: PollDraftService,
     private readonly organization: OrganizationFieldsService,
+    private readonly recurring: RecurringAssignmentsService,
   ) {}
 
   @Post('login')
@@ -284,6 +286,81 @@ export class AdminController {
   @HttpCode(204)
   removeWindow(@Param('windowId') windowId: string) {
     return this.supervisors.removeWindow(windowId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Turnos fijos (quién atiende habitualmente cada franja)
+  // -------------------------------------------------------------------------
+
+  /** Las plantillas del punto con sus titulares habituales. */
+  @Get('locations/:id/recurring')
+  @UseGuards(AdminAuthGuard)
+  async recurringSlots(@Param('id') id: string) {
+    const [slots, porPersona, padron] = await Promise.all([
+      this.recurring.listByLocation(id),
+      this.recurring.countByParticipant(id),
+      this.prisma.participant.findMany({
+        where: { memberships: { some: { locationId: id, active: true } } },
+        select: {
+          id: true,
+          firstName: true,
+          paternalSurname: true,
+          maternalSurname: true,
+          displayName: true,
+        },
+        orderBy: [...PADRON_ORDER],
+      }),
+    ]);
+
+    return {
+      slots,
+      // Quiénes no tienen ningún turno fijo todavía: es lo que falta por
+      // capturar y conviene verlo sin tener que recorrer la rejilla.
+      padron: padron.map((persona) => ({
+        id: persona.id,
+        name: displayName(persona),
+        formalName: formalName(persona),
+        recurringCount: porPersona.get(persona.id) ?? 0,
+      })),
+    };
+  }
+
+  /** Quiénes pueden tomar esa franja como titulares. */
+  @Get('locations/:id/recurring/:templateId/candidates')
+  @UseGuards(AdminAuthGuard)
+  async recurringCandidates(@Param('id') id: string, @Param('templateId') templateId: string) {
+    const candidatos = await this.recurring.candidatesFor(templateId, id);
+    return candidatos.map((persona) => ({
+      id: persona.id,
+      name: displayName(persona),
+      formalName: formalName(persona),
+    }));
+  }
+
+  @Post('locations/:id/recurring/:templateId/holders')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(201)
+  async addRecurringHolder(
+    @Param('templateId') templateId: string,
+    @Body() dto: AssignParticipantDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.recurring.assign(templateId, dto.participantId, {
+      id: admin.sub,
+      name: admin.name,
+    });
+    return { ok: true };
+  }
+
+  @Delete('recurring/:recurringId')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(200)
+  async removeRecurringHolder(
+    @Param('recurringId') recurringId: string,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.recurring.unassign(recurringId, { id: admin.sub, name: admin.name });
+    return { ok: true };
   }
 
   // -------------------------------------------------------------------------

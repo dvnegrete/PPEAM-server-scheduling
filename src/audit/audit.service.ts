@@ -32,6 +32,8 @@ export const AUDIT_ACTIONS = {
   THREAD_OPENED: 'thread.opened',
   THREAD_ANSWERED: 'thread.answered',
   THREAD_CLOSED: 'thread.closed',
+  RECURRING_ASSIGNED: 'recurring.assigned',
+  RECURRING_UNASSIGNED: 'recurring.unassigned',
   IMPORT_RUN: 'import.run',
 } as const;
 
