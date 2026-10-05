@@ -18,15 +18,23 @@ import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
 import { AdminAuthGuard } from './admin-auth.guard';
 import {
+  AssignParticipantDto,
+  CancelAssignmentDto,
   CreateParticipantDto,
   CreateWindowDto,
   ImportDto,
   LoginDto,
   MonthQueryDto,
+  PollDraftQueryDto,
+  RangeQueryDto,
   UpdateSettingsDto,
 } from './admin.dto';
-import { AdminAuthService } from './auth.service';
+import { AdminAuthService, AdminTokenPayload } from './auth.service';
+import { CurrentAdmin } from './current-admin.decorator';
 import { SupervisorsService } from '../supervisors/supervisors.service';
+import { AssignmentsService } from '../scheduling/assignments.service';
+import { PollDraftService } from '../reports/poll-draft.service';
+import { ActorType } from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
 @Controller('api/admin')
@@ -40,6 +48,8 @@ export class AdminController {
     private readonly generator: ScheduleGeneratorService,
     private readonly participants: ParticipantsService,
     private readonly supervisors: SupervisorsService,
+    private readonly assignments: AssignmentsService,
+    private readonly pollDraft_: PollDraftService,
   ) {}
 
   @Post('login')
@@ -165,6 +175,101 @@ export class AdminController {
   @HttpCode(204)
   removeWindow(@Param('windowId') windowId: string) {
     return this.supervisors.removeWindow(windowId);
+  }
+
+  // -------------------------------------------------------------------------
+  // Tablero operativo
+  // -------------------------------------------------------------------------
+
+  @Get('locations/:id/dashboard')
+  @UseGuards(AdminAuthGuard)
+  dashboard(@Param('id') id: string, @Query() query: RangeQueryDto) {
+    return this.reports.dashboard(id, new Date(query.from), new Date(query.to));
+  }
+
+  /** Da de baja a un participante de un turno. La baja se aplica de inmediato. */
+  @Post('assignments/:assignmentId/cancel')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(200)
+  async cancelAssignment(
+    @Param('assignmentId') assignmentId: string,
+    @Body() dto: CancelAssignmentDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.assignments.cancel({
+      assignmentId,
+      actorId: admin.sub,
+      actorType: ActorType.ADMIN,
+      actorName: admin.name,
+      reason: dto.reason,
+      reasonCode: dto.reasonCode,
+    });
+    return { ok: true };
+  }
+
+  /** Registra a quien se ofreció en el grupo tras la encuesta. */
+  @Post('locations/:id/shifts/:shiftId/assignments')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(201)
+  async assignParticipant(
+    @Param('shiftId') shiftId: string,
+    @Body() dto: AssignParticipantDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.assignments.assignManually({
+      shiftId,
+      participantId: dto.participantId,
+      actorId: admin.sub,
+      actorName: admin.name,
+      actorType: ActorType.ADMIN,
+    });
+    return { ok: true };
+  }
+
+  /** Quiénes pueden tomar ese turno, para el selector del tablero. */
+  @Get('locations/:id/shifts/:shiftId/available-participants')
+  @UseGuards(AdminAuthGuard)
+  availableParticipants(@Param('id') id: string, @Param('shiftId') shiftId: string) {
+    return this.prisma.participant.findMany({
+      where: {
+        status: 'ACTIVE',
+        memberships: { some: { locationId: id, active: true } },
+        // Quien ya ocupa un lugar en ese turno no puede volver a tomarlo.
+        NOT: {
+          assignments: {
+            some: { shiftId, status: { in: ['ASSIGNED', 'CONFIRMED'] } },
+          },
+        },
+      },
+      select: { id: true, fullName: true, role: true },
+      orderBy: { fullName: 'asc' },
+    });
+  }
+
+  /** Movimientos de un turno, incluidas las personas que ya no figuran en él. */
+  @Get('shifts/:shiftId/history')
+  @UseGuards(AdminAuthGuard)
+  shiftHistory(@Param('shiftId') shiftId: string) {
+    return this.reports.shiftHistory(shiftId);
+  }
+
+  /** Actividad reciente del punto, para la cabecera del tablero. */
+  @Get('locations/:id/movements')
+  @UseGuards(AdminAuthGuard)
+  movements(@Param('id') id: string, @Query('limit') limit?: string) {
+    return this.reports.recentMovements(id, limit ? Number(limit) : 20);
+  }
+
+  /** Texto listo para copiar a la encuesta del grupo. */
+  @Get('locations/:id/poll-draft')
+  @UseGuards(AdminAuthGuard)
+  pollDraft(@Param('id') id: string, @Query() query: PollDraftQueryDto) {
+    return this.pollDraft_.build(
+      id,
+      new Date(query.from),
+      new Date(query.to),
+      query.level ?? 'cupo',
+    );
   }
 
   @Get('locations/:id/settings')

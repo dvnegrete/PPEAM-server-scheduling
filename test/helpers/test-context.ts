@@ -13,6 +13,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { ConversationModule } from '../../src/conversation/conversation.module';
 import { MessagingModule } from '../../src/messaging/messaging.module';
 import { ParticipantsModule } from '../../src/participants/participants.module';
+import { ReportsModule } from '../../src/reports/reports.module';
 import { SchedulingModule } from '../../src/scheduling/scheduling.module';
 import { SupervisorsModule } from '../../src/supervisors/supervisors.module';
 import { ThreadsModule } from '../../src/threads/threads.module';
@@ -59,6 +60,7 @@ export async function createFullTestContext(): Promise<TestContext> {
     ThreadsModule,
     MessagingModule,
     ConversationModule,
+    ReportsModule,
   ]);
 }
 

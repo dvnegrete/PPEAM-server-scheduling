@@ -15,7 +15,16 @@ export async function createLocation(
       defaultCapacity: overrides.defaultCapacity ?? 3,
       minCapacity: overrides.minCapacity ?? 2,
       maxCapacity: 4,
-      settings: overrides.settings ?? {},
+      // Un punto real nace con la mensajería restringida, que es la postura segura
+      // mientras se opera con una cuenta de prueba de Meta. Para las pruebas que no
+      // tratan sobre la política de entrega, ese modo silenciaría todo lo que
+      // quieren comprobar, así que aquí se nace en modo activo. Los ajustes propios
+      // de cada prueba se fusionan encima y pueden sobrescribirlo.
+      settings: {
+        messagingMode: 'live',
+        broadcastCoverageToParticipants: true,
+        ...(overrides.settings ?? {}),
+      },
     },
   });
 }

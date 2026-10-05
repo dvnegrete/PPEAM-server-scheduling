@@ -45,6 +45,18 @@ export class NotificationListeners {
   @OnEvent(DOMAIN_EVENTS.COVERAGE_OPENED)
   async onCoverageOpened(event: CoverageOpenedEvent): Promise<void> {
     const settings = await this.settings.forLocation(event.locationId);
+
+    // Mientras la convocatoria se haga con una encuesta manual en el grupo, el
+    // sistema no difunde nada por su cuenta: la vacante queda abierta y visible
+    // en el tablero, que es de donde sale el texto de esa encuesta.
+    if (!settings.broadcastCoverageToParticipants) {
+      this.logger.log(
+        `Vacante de ${event.shiftLabel} abierta sin difusión automática ` +
+          '(la convocatoria se hace por encuesta en el grupo)',
+      );
+      return;
+    }
+
     const audience = (
       await this.notifications.broadcastAudience(event.locationId, event.excludeParticipantIds)
     ).slice(0, settings.broadcastBatchSize);

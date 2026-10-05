@@ -14,12 +14,23 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CoverageService } from './coverage.service';
 import { OCCUPYING_STATUSES, ShiftsService } from './shifts.service';
 
+/** Motivos frecuentes, para poder agruparlos en los reportes. */
+export const CANCEL_REASON_CODES = ['enfermedad', 'trabajo', 'viaje', 'otro'] as const;
+export type CancelReasonCode = (typeof CANCEL_REASON_CODES)[number];
+
 export interface CancelParams {
   assignmentId: string;
   /** Quién ejecuta la baja; null cuando la origina el propio participante. */
   actorId?: string | null;
   actorType?: ActorType;
+  /** Nombre de quien la captura, para mostrarlo en el tablero sin más consultas. */
+  actorName?: string | null;
   reason?: string;
+  /**
+   * Motivo de la lista corta. Se tipa como texto porque el panel puede agregar
+   * motivos propios sin tocar el dominio; la validación vive en el DTO.
+   */
+  reasonCode?: string;
 }
 
 @Injectable()
@@ -71,6 +82,9 @@ export class AssignmentsService {
           status: AssignmentStatus.CANCELLED,
           cancelledAt: this.time.now(),
           cancelReason: params.reason ?? null,
+          cancelReasonCode: params.reasonCode ?? null,
+          // Quien captura la baja; si la origina el propio participante, es él mismo.
+          cancelledByName: params.actorName ?? assignment.participant.fullName,
         },
       });
 
@@ -78,13 +92,21 @@ export class AssignmentsService {
         {
           actorType: params.actorType ?? ActorType.PARTICIPANT,
           actorId: params.actorId ?? assignment.participantId,
-          actorName: assignment.participant.fullName,
+          actorName: params.actorName ?? assignment.participant.fullName,
           action: AUDIT_ACTIONS.ASSIGNMENT_CANCELLED,
           entity: 'Assignment',
           entityId: assignment.id,
           before: { status: assignment.status },
-          after: { status: AssignmentStatus.CANCELLED, reason: params.reason ?? null },
-          metadata: { shiftId: assignment.shiftId, shiftLabel },
+          after: {
+            status: AssignmentStatus.CANCELLED,
+            reason: params.reason ?? null,
+            reasonCode: params.reasonCode ?? null,
+          },
+          metadata: {
+            shiftId: assignment.shiftId,
+            shiftLabel,
+            participantName: assignment.participant.fullName,
+          },
         },
         tx,
       );
@@ -126,6 +148,128 @@ export class AssignmentsService {
     this.logger.log(
       `${assignment.participant.fullName} canceló ${shiftLabel}; quedan ${remaining} de ${assignment.shift.capacity}` +
         (urgent ? ' (urgente)' : ''),
+    );
+  }
+
+  /**
+   * Sienta a un participante en un turno por decisión de un administrador.
+   *
+   * Es el cierre del ciclo cuando la convocatoria se hace por fuera del sistema:
+   * alguien responde la encuesta del grupo y el administrador lo registra aquí
+   * para que el tablero vuelva a reflejar la realidad.
+   *
+   * El bloqueo de fila sobre el turno es el mismo que usa la aprobación de
+   * coberturas: sin él, dos administradores registrando a la vez la respuesta de
+   * dos personas distintas podrían dejar el turno con más gente que su cupo.
+   */
+  async assignManually(params: {
+    shiftId: string;
+    participantId: string;
+    actorId?: string | null;
+    actorName?: string | null;
+    actorType?: ActorType;
+  }): Promise<void> {
+    const outcome = await this.prisma.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT id FROM shifts WHERE id = ${params.shiftId} FOR UPDATE`;
+
+      const shift = await tx.shift.findUnique({
+        where: { id: params.shiftId },
+        include: { location: true },
+      });
+      if (!shift) throw new NotFoundException('Ese turno ya no existe');
+      if (shift.status === ShiftStatus.CANCELLED) {
+        throw new BadRequestException('Ese turno está cancelado');
+      }
+
+      const participant = await tx.participant.findUnique({
+        where: { id: params.participantId },
+      });
+      if (!participant) throw new NotFoundException('Ese participante ya no existe');
+      if (participant.status !== 'ACTIVE') {
+        throw new BadRequestException(`${participant.fullName} no está activo en el padrón`);
+      }
+
+      const occupied = await tx.assignment.count({
+        where: { shiftId: shift.id, status: { in: OCCUPYING_STATUSES } },
+      });
+      if (occupied >= shift.capacity) {
+        throw new BadRequestException('Ese turno ya está completo');
+      }
+
+      const existing = await tx.assignment.findUnique({
+        where: {
+          shiftId_participantId: { shiftId: shift.id, participantId: participant.id },
+        },
+      });
+      if (existing && OCCUPYING_STATUSES.includes(existing.status)) {
+        throw new BadRequestException(`${participant.fullName} ya tiene lugar en ese turno`);
+      }
+
+      // La fila se reutiliza si esta persona había cancelado antes: el índice único
+      // lo exige. Por eso se limpian los datos de la baja y se sella la fecha nueva.
+      await tx.assignment.upsert({
+        where: {
+          shiftId_participantId: { shiftId: shift.id, participantId: participant.id },
+        },
+        create: {
+          shiftId: shift.id,
+          participantId: participant.id,
+          origin: 'COVERAGE',
+          status: AssignmentStatus.ASSIGNED,
+          assignedAt: this.time.now(),
+          assignedByName: params.actorName ?? null,
+        },
+        update: {
+          origin: 'COVERAGE',
+          status: AssignmentStatus.ASSIGNED,
+          assignedAt: this.time.now(),
+          assignedByName: params.actorName ?? null,
+          cancelledAt: null,
+          cancelReason: null,
+          cancelReasonCode: null,
+          cancelledByName: null,
+          confirmedAt: null,
+          remindedAt: null,
+        },
+      });
+
+      // Si el turno quedó cubierto, la vacante abierta deja de tener sentido.
+      const ocupadosAhora = occupied + 1;
+      if (ocupadosAhora >= shift.capacity) {
+        await tx.coverageRequest.updateMany({
+          where: { shiftId: shift.id, status: 'OPEN' },
+          data: { status: 'FULFILLED' },
+        });
+      }
+
+      await this.shifts.recomputeStatus(shift.id, tx);
+
+      const shiftLabel = this.shifts.label(shift, shift.location.timezone);
+      await this.audit.record(
+        {
+          actorType: params.actorType ?? ActorType.ADMIN,
+          actorId: params.actorId ?? null,
+          actorName: params.actorName ?? null,
+          action: AUDIT_ACTIONS.ASSIGNMENT_CREATED,
+          entity: 'Assignment',
+          entityId: `${shift.id}:${participant.id}`,
+          after: { participantId: participant.id, origin: 'COVERAGE' },
+          metadata: {
+            shiftId: shift.id,
+            shiftLabel,
+            participantName: participant.fullName,
+            manual: true,
+          },
+        },
+        tx,
+      );
+
+      return { shiftLabel, participantName: participant.fullName };
+    });
+
+    this.logger.log(
+      `${outcome.participantName} queda asignado a ${outcome.shiftLabel}` +
+        (params.actorName ? ` (registrado por ${params.actorName})` : ''),
     );
   }
 

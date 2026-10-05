@@ -1,7 +1,9 @@
 import { Type } from 'class-transformer';
 import {
+  IsArray,
   IsBoolean,
   IsEmail,
+  IsIn,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -9,6 +11,7 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import { CANCEL_REASON_CODES } from '../scheduling/assignments.service';
 
 export class LoginDto {
   @IsEmail({}, { message: 'El correo no es válido' })
@@ -57,6 +60,39 @@ export class CreateParticipantDto {
   role?: string;
 }
 
+export class RangeQueryDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Falta la fecha inicial' })
+  from!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Falta la fecha final' })
+  to!: string;
+}
+
+export class PollDraftQueryDto extends RangeQueryDto {
+  @IsOptional()
+  @IsIn(['cupo', 'minimo'], { message: 'El nivel debe ser cupo o minimo' })
+  level?: 'cupo' | 'minimo';
+}
+
+export class CancelAssignmentDto {
+  @IsIn([...CANCEL_REASON_CODES], {
+    message: `El motivo debe ser uno de: ${CANCEL_REASON_CODES.join(', ')}`,
+  })
+  reasonCode!: string;
+
+  @IsOptional()
+  @IsString()
+  reason?: string;
+}
+
+export class AssignParticipantDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el participante' })
+  participantId!: string;
+}
+
 export class CreateWindowDto {
   @Type(() => Number)
   @IsInt()
@@ -88,4 +124,16 @@ export class UpdateSettingsDto {
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) scheduleHorizonMonths?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) broadcastBatchSize?: number;
   @IsOptional() @IsBoolean() autoResolveUrgent?: boolean;
+
+  @IsOptional()
+  @IsIn(['test', 'live'], { message: 'El modo debe ser test o live' })
+  messagingMode?: 'test' | 'live';
+
+  /** Teléfonos dados de alta en la cuenta de prueba de Meta. */
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  allowedRecipients?: string[];
+
+  @IsOptional() @IsBoolean() broadcastCoverageToParticipants?: boolean;
 }

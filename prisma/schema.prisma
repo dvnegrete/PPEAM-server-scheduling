@@ -327,9 +327,24 @@ model Assignment {
   origin AssignmentOrigin @default(FIXED)
   status AssignmentStatus @default(ASSIGNED)
 
-  confirmedAt  DateTime? @map("confirmed_at")
-  cancelledAt  DateTime? @map("cancelled_at")
-  cancelReason String?   @map("cancel_reason")
+  confirmedAt DateTime? @map("confirmed_at")
+
+  /// Momento en que quedó registrada ESTA asignación.
+  /// No se usa `createdAt` porque el índice único (shiftId, participantId) obliga a
+  /// reutilizar la fila cuando alguien cancela y más tarde vuelve al mismo turno:
+  /// `createdAt` conservaría la fecha del primer registro, no la del movimiento vigente.
+  assignedAt DateTime? @map("assigned_at")
+
+  /// Quién capturó la asignación. Se guarda el nombre además del id que queda en la
+  /// bitácora, porque el tablero lo muestra y así se pinta sin cruzar contra AuditLog
+  /// ni contra dos tablas de actores distintas (panel y encargados de WhatsApp).
+  assignedByName String? @map("assigned_by_name")
+
+  cancelledAt      DateTime? @map("cancelled_at")
+  cancelReason     String?   @map("cancel_reason")
+  /// Motivo de la lista corta (enfermedad, trabajo, viaje, otro), para agrupar en reportes.
+  cancelReasonCode String?   @map("cancel_reason_code")
+  cancelledByName  String?   @map("cancelled_by_name")
 
   /// Última vez que se le envió recordatorio, para no duplicar envíos.
   remindedAt DateTime? @map("reminded_at")

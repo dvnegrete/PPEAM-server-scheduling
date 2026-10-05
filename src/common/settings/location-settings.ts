@@ -41,6 +41,26 @@ export const locationSettingsSchema = z.object({
 
   /** Si es true, al vencer el plazo de una vacante urgente el sistema aprueba solo. */
   autoResolveUrgent: z.boolean().default(true),
+
+  /**
+   * Modo de entrega de mensajes.
+   *
+   * `test` es para operar con una cuenta de prueba de Meta, que solo permite
+   * escribir a un puñado de números dados de alta: cualquier envío a otro número
+   * sería rechazado y llenaría el outbox de fallos. En ese modo solo se entrega a
+   * `allowedRecipients`; el resto se omite y queda en el log.
+   */
+  messagingMode: z.enum(['test', 'live']).default('test'),
+
+  /** Teléfonos en E.164 dados de alta en la cuenta de prueba. Solo aplica en modo `test`. */
+  allowedRecipients: z.array(z.string()).default([]),
+
+  /**
+   * Si es false, abrir una vacante no difunde nada a los participantes.
+   * Mientras la convocatoria se haga con una encuesta manual en el grupo, esto
+   * evita mensajes que nadie espera y que además no podrían entregarse.
+   */
+  broadcastCoverageToParticipants: z.boolean().default(false),
 });
 
 export type LocationSettings = z.infer<typeof locationSettingsSchema>;

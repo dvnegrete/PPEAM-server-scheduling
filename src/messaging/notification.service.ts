@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Participant, ParticipantStatus, Prisma } from '@prisma/client';
+import { PhoneService } from '../common/phone/phone.service';
+import { SettingsService } from '../common/settings/settings.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { MessageBuilder } from '../whatsapp/message-builder';
 import { OutboxService } from '../whatsapp/outbox.service';
@@ -22,7 +24,69 @@ export class NotificationService {
     private readonly prisma: PrismaService,
     private readonly outbox: OutboxService,
     private readonly window: ConversationWindowService,
+    private readonly settings: SettingsService,
+    private readonly phone: PhoneService,
   ) {}
+
+  /**
+   * Filtra a quiénes se les puede entregar según el modo de mensajería del punto.
+   *
+   * Con una cuenta de prueba de Meta solo se puede escribir a los números dados de
+   * alta; enviar a cualquier otro se rechaza y ensucia el outbox con fallos que no
+   * dicen nada nuevo. Es preferible no encolarlos y dejar constancia en el log.
+   */
+  private async deliverableIds(participants: Participant[]): Promise<Set<string>> {
+    if (participants.length === 0) return new Set();
+
+    const memberships = await this.prisma.locationMembership.findMany({
+      where: { participantId: { in: participants.map((item) => item.id) }, active: true },
+      select: { participantId: true, locationId: true },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    const locationOf = new Map<string, string>();
+    for (const membership of memberships) {
+      if (!locationOf.has(membership.participantId)) {
+        locationOf.set(membership.participantId, membership.locationId);
+      }
+    }
+
+    // Los ajustes se resuelven una vez por punto, no una vez por destinatario.
+    const settingsOf = new Map<string, Awaited<ReturnType<SettingsService['forLocation']>>>();
+    for (const locationId of new Set(locationOf.values())) {
+      settingsOf.set(locationId, await this.settings.forLocation(locationId));
+    }
+
+    const allowed = new Set<string>();
+    for (const participant of participants) {
+      const locationId = locationOf.get(participant.id);
+      const settings = locationId ? settingsOf.get(locationId) : undefined;
+
+      // Sin punto asociado no hay política que aplicar: se deja pasar y que el
+      // outbox reporte el resultado real.
+      if (!settings || settings.messagingMode === 'live') {
+        allowed.add(participant.id);
+        continue;
+      }
+
+      const variantes = this.phone.lookupVariants(participant.phoneE164);
+      const permitido = settings.allowedRecipients.some((raw) => {
+        const normalizado = this.phone.tryNormalize(raw);
+        return normalizado ? variantes.includes(normalizado) : variantes.includes(raw);
+      });
+
+      if (permitido) {
+        allowed.add(participant.id);
+      } else {
+        this.logger.debug(
+          `Modo de prueba: se omite el aviso a ${participant.fullName} ` +
+            `(${participant.phoneE164} no está en la lista de números autorizados)`,
+        );
+      }
+    }
+
+    return allowed;
+  }
 
   /**
    * Envía a una persona eligiendo el canal correcto.
@@ -49,6 +113,9 @@ export class NotificationService {
     spec: NotificationSpec,
     tx?: Prisma.TransactionClient,
   ): Promise<boolean> {
+    const deliverable = await this.deliverableIds([participant]);
+    if (!deliverable.has(participant.id)) return false;
+
     const open = await this.window.isOpen(participant.id);
 
     if (open) {
@@ -88,10 +155,14 @@ export class NotificationService {
   ): Promise<number> {
     if (participants.length === 0) return 0;
 
-    const openIds = await this.window.openFor(participants.map((item) => item.id));
+    const deliverable = await this.deliverableIds(participants);
+    const destinatarios = participants.filter((item) => deliverable.has(item.id));
+    if (destinatarios.length === 0) return 0;
+
+    const openIds = await this.window.openFor(destinatarios.map((item) => item.id));
     let sent = 0;
 
-    for (const participant of participants) {
+    for (const participant of destinatarios) {
       const spec = build(participant);
       const open = openIds.has(participant.id);
 
