@@ -1,3 +1,4 @@
+import { ParticipantRole, ParticipantStatus } from '@prisma/client';
 import { createLocation, createParticipant } from '../../test/helpers/fixtures';
 import { createTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { CsvImportService } from './csv-import.service';
@@ -434,6 +435,149 @@ describe('Importación desde CSV (integración)', () => {
     });
   });
 
+  describe('reimportación con datos actualizados', () => {
+    /** Padrón completo, tal como quedaría tras la primera carga. */
+    async function cargaInicial() {
+      await importer.importParticipants(
+        'nombre,apellido_paterno,apellido_materno,telefono,rol,alertas\n' +
+          'Ana,López,Pérez,5512345678,encargado,no',
+        { locationId },
+      );
+      return ctx.prisma.participant.findFirstOrThrow({
+        where: { paternalSurname: 'López' },
+        include: { memberships: true },
+      });
+    }
+
+    it('actualiza lo que viene y conserva lo que el archivo no trae', async () => {
+      await cargaInicial();
+
+      // El segundo archivo solo corrige el nombre. Las columnas que no trae no
+      // son una instrucción de borrar: lo capturado a mano en el panel —el rol
+      // de encargado, la preferencia de avisos, el apellido materno— tiene que
+      // sobrevivir, o cada reimportación desharía ese trabajo en silencio.
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\nAna María,López,5512345678',
+        { locationId },
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.updated).toBe(1);
+      expect(result.errors).toHaveLength(0);
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        include: { memberships: true },
+      });
+      expect(ana.firstName).toBe('Ana María');
+      expect(ana.maternalSurname).toBe('Pérez');
+      expect(ana.memberships[0].role).toBe(ParticipantRole.SUPERVISOR);
+      expect(ana.memberships[0].coverageAlerts).toBe(false);
+      expect(await ctx.prisma.participant.count()).toBe(1);
+    });
+
+    it('una celda vacía tampoco borra: para quitar un dato se usa el panel', async () => {
+      await cargaInicial();
+
+      await importer.importParticipants(
+        'nombre,apellido_paterno,apellido_materno,telefono,rol,alertas\n' +
+          'Ana,López,,5512345678,,',
+        { locationId },
+      );
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        include: { memberships: true },
+      });
+      expect(ana.maternalSurname).toBe('Pérez');
+      expect(ana.memberships[0].role).toBe(ParticipantRole.SUPERVISOR);
+      expect(ana.memberships[0].coverageAlerts).toBe(false);
+    });
+
+    it('un valor explícito sí sustituye al anterior', async () => {
+      await cargaInicial();
+
+      await importer.importParticipants(
+        'nombre,apellido_paterno,apellido_materno,telefono,rol,alertas\n' +
+          'Ana,López,Ramírez,5512345678,participante,si',
+        { locationId },
+      );
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        include: { memberships: true },
+      });
+      expect(ana.maternalSurname).toBe('Ramírez');
+      expect(ana.memberships[0].role).toBe(ParticipantRole.PARTICIPANT);
+      expect(ana.memberships[0].coverageAlerts).toBe(true);
+    });
+
+    it('agrupa sin mezclar a quien trae valores con quien no los trae', async () => {
+      // Las membresías se actualizan agrupadas por valor para no hacer una
+      // consulta por persona. El riesgo es que el grupo de «no tocar» arrastre
+      // el valor de otra fila, así que se comprueba con las dos cosas juntas.
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,rol,alertas\n' +
+          'Ana,López,5512345678,encargado,no\n' +
+          'Beto,Ruiz,5512345679,encargado,no',
+        { locationId },
+      );
+
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,rol\n' +
+          'Ana,López,5512345678,participante\n' +
+          'Beto,Ruiz,5512345679,',
+        { locationId },
+      );
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        where: { firstName: 'Ana' },
+        include: { memberships: true },
+      });
+      const beto = await ctx.prisma.participant.findFirstOrThrow({
+        where: { firstName: 'Beto' },
+        include: { memberships: true },
+      });
+
+      expect(ana.memberships[0].role).toBe(ParticipantRole.PARTICIPANT);
+      expect(beto.memberships[0].role).toBe(ParticipantRole.SUPERVISOR);
+      // La preferencia de avisos no venía en ninguna de las dos filas.
+      expect(ana.memberships[0].coverageAlerts).toBe(false);
+      expect(beto.memberships[0].coverageAlerts).toBe(false);
+    });
+
+    it('un teléfono distinto es otra persona, no una actualización', async () => {
+      await cargaInicial();
+
+      // El teléfono es la clave: cambiarlo en el archivo no renombra a nadie,
+      // da de alta a alguien más. Un cambio de número se hace en el panel.
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\nAna,López,5599998888',
+        { locationId },
+      );
+
+      expect(result.created).toBe(1);
+      expect(result.updated).toBe(0);
+      expect(await ctx.prisma.participant.count()).toBe(2);
+    });
+
+    it('no toca a quien no viene en el archivo nuevo', async () => {
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\nAna,López,5512345678\nBeto,Ruiz,5512345679',
+        { locationId },
+      );
+
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      // Un archivo parcial no es una lista de bajas: Beto sigue activo.
+      const beto = await ctx.prisma.participant.findFirstOrThrow({
+        where: { firstName: 'Beto' },
+        include: { memberships: true },
+      });
+      expect(beto.status).toBe(ParticipantStatus.ACTIVE);
+      expect(beto.memberships[0].active).toBe(true);
+    });
+  });
+
   describe('estado civil y cónyuge', () => {
     it('importa el estado civil escrito en español, con o sin género', async () => {
       const csv = [
@@ -611,6 +755,79 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.created).toBe(2);
       expect(result.errors).toHaveLength(0);
       expect(await ctx.prisma.recurringAssignment.count()).toBe(2);
+    });
+
+    it('toma varias filas con el mismo teléfono como varios turnos fijos', async () => {
+      // Una persona atiende más de una franja: se repite su teléfono en tantas
+      // filas como franjas tenga. El archivo no lleva una fila por persona.
+      await plantillaLunes();
+      await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId,
+          weekday: 3,
+          startMinute: 9 * 60,
+          endMinute: 11 * 60,
+          capacity: 3,
+          weekOfMonth: 0,
+        },
+      });
+      await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId,
+          weekday: 6,
+          startMinute: 9 * 60,
+          endMinute: 11 * 60,
+          capacity: 3,
+          weekOfMonth: 2,
+        },
+      });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const csv = [
+        'telefono,dia,inicio,semana',
+        '5512345678,lunes,7:00,',
+        '5512345678,miercoles,9:00,0',
+        '5512345678,sabado,9:00,2',
+      ].join('\n');
+
+      const result = await importer.importRecurringAssignments(csv, { locationId });
+
+      expect(result.created).toBe(3);
+      expect(result.errors).toHaveLength(0);
+
+      const titular = await ctx.prisma.participant.findFirstOrThrow({
+        where: { firstName: 'Ana' },
+      });
+      const franjas = await ctx.prisma.recurringAssignment.findMany({
+        where: { participantId: titular.id, active: true },
+        include: { shiftTemplate: true },
+      });
+      expect(
+        franjas
+          .map((franja) => `${franja.shiftTemplate.weekday}:${franja.shiftTemplate.weekOfMonth}`)
+          .sort(),
+      ).toEqual(['1:0', '3:0', '6:2']);
+    });
+
+    it('repetir la misma franja no duplica el turno fijo', async () => {
+      // Un archivo con la fila duplicada no debe reventar ni crear dos
+      // titulares de la misma persona: la segunda vuelve a activar la primera.
+      await plantillaLunes();
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,7:00\n5512345678,lunes,7:00',
+        { locationId },
+      );
+
+      expect(result.created).toBe(1);
+      expect(result.updated).toBe(1);
+      expect(result.errors).toHaveLength(0);
+      expect(await ctx.prisma.recurringAssignment.count()).toBe(1);
     });
 
     it('acepta los días con y sin acento', async () => {

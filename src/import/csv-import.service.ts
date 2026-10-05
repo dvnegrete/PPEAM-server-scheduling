@@ -32,11 +32,14 @@ interface FilaValidada {
     city: string | null;
     maritalStatus: MaritalStatus;
   };
-  role: ParticipantRole;
-  coverageAlerts: boolean;
+  /** `null` cuando el archivo no traía la columna: no se toca lo ya registrado. */
+  role: ParticipantRole | null;
+  /** `null` cuando el archivo no traía la columna. */
+  coverageAlerts: boolean | null;
   hasConsent: boolean;
   /** Qué columnas venían en el archivo, para no borrar lo capturado a mano. */
   traia: {
+    maternalSurname: boolean;
     displayName: boolean;
     congregation: boolean;
     circuit: boolean;
@@ -175,10 +178,13 @@ export class CsvImportService {
         });
         continue;
       }
-      const role = ROLE_BY_NAME[roleRaw] ?? 'PARTICIPANT';
+      // Sin columna no hay nada que escribir: al reimportar, un rol vacío no
+      // debe degradar a un encargado que se marcó a mano en el panel. El valor
+      // por omisión se aplica al dar de alta, no al actualizar.
+      const role = roleRaw ? ROLE_BY_NAME[roleRaw] : null;
 
       const alertsRaw = (row.alertas ?? row.alerts ?? '').trim().toLowerCase();
-      const coverageAlerts = alertsRaw === '' ? true : !['no', 'false', '0'].includes(alertsRaw);
+      const coverageAlerts = alertsRaw === '' ? null : !['no', 'false', '0'].includes(alertsRaw);
 
       const consentRaw = (row.consentimiento ?? row.consent ?? '').trim().toLowerCase();
       const hasConsent = consentRaw === '' ? true : !['no', 'false', '0'].includes(consentRaw);
@@ -264,6 +270,7 @@ export class CsvImportService {
         // Qué columnas venían en el archivo: una vacía no debe borrar un dato
         // que se capturó a mano en el panel.
         traia: {
+          maternalSurname: Boolean(maternalSurname),
           displayName: Boolean(displayNameRaw),
           congregation: Boolean(congregacion),
           circuit: Boolean(circuito),
@@ -342,6 +349,8 @@ export class CsvImportService {
           return {
             participantId: persona.id,
             locationId: options.locationId,
+            // En un alta nueva no hay nada que conservar, así que la columna
+            // ausente se resuelve con el valor por omisión.
             role: fila?.role ?? 'PARTICIPANT',
             coverageAlerts: fila?.coverageAlerts ?? true,
             // Es su primera membresía, así que es la principal: alguien siempre
@@ -362,7 +371,7 @@ export class CsvImportService {
         data: {
           firstName: fila.datos.firstName,
           paternalSurname: fila.datos.paternalSurname,
-          maternalSurname: fila.datos.maternalSurname,
+          ...(fila.traia.maternalSurname ? { maternalSurname: fila.datos.maternalSurname } : {}),
           ...(fila.traia.displayName ? { displayName: fila.datos.displayName } : {}),
           ...(fila.traia.congregation ? { congregation: fila.datos.congregation } : {}),
           ...(fila.traia.circuit ? { circuit: fila.datos.circuit } : {}),
@@ -392,8 +401,8 @@ export class CsvImportService {
           return {
             participantId: persona.id,
             locationId: options.locationId,
-            role: fila.role,
-            coverageAlerts: fila.coverageAlerts,
+            role: fila.role ?? 'PARTICIPANT',
+            coverageAlerts: fila.coverageAlerts ?? true,
             // Solo es principal si no tenía ninguna activa en otro punto.
             isPrimary: !persona.memberships.some((m) => m.active),
           };
@@ -402,23 +411,32 @@ export class CsvImportService {
       });
     }
 
+    // Se agrupan por los valores a escribir, para no hacer una consulta por
+    // persona. Una columna ausente vale «no tocar» y forma su propio grupo, en
+    // lugar de arrastrar consigo el valor por omisión.
     const conMembresia = repetidas.filter((fila) => !sinMembresia.includes(fila));
-    const grupos = new Map<string, string[]>();
+    const grupos = new Map<
+      string,
+      { role: ParticipantRole | null; coverageAlerts: boolean | null; ids: string[] }
+    >();
     for (const fila of conMembresia) {
-      const clave = `${fila.role}|${fila.coverageAlerts}`;
-      const ids = grupos.get(clave) ?? [];
-      ids.push(porTelefono.get(fila.phoneE164)!.id);
-      grupos.set(clave, ids);
+      const clave = `${fila.role ?? '-'}|${fila.coverageAlerts ?? '-'}`;
+      const grupo = grupos.get(clave) ?? {
+        role: fila.role,
+        coverageAlerts: fila.coverageAlerts,
+        ids: [],
+      };
+      grupo.ids.push(porTelefono.get(fila.phoneE164)!.id);
+      grupos.set(clave, grupo);
     }
 
-    for (const [clave, participantIds] of grupos) {
-      const [role, alerts] = clave.split('|');
+    for (const grupo of grupos.values()) {
       await this.prisma.locationMembership.updateMany({
-        where: { locationId: options.locationId, participantId: { in: participantIds } },
+        where: { locationId: options.locationId, participantId: { in: grupo.ids } },
         data: {
           active: true,
-          role: role as ParticipantRole,
-          coverageAlerts: alerts === 'true',
+          ...(grupo.role !== null ? { role: grupo.role } : {}),
+          ...(grupo.coverageAlerts !== null ? { coverageAlerts: grupo.coverageAlerts } : {}),
         },
       });
     }
