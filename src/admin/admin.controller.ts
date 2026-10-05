@@ -88,7 +88,7 @@ export class AdminController {
   @Get('locations/:id/participants')
   @UseGuards(AdminAuthGuard)
   async participantsOf(@Param('id') id: string) {
-    return this.prisma.participant.findMany({
+    const padron = await this.prisma.participant.findMany({
       where: { memberships: { some: { locationId: id, active: true } } },
       orderBy: [...PADRON_ORDER],
       select: {
@@ -98,10 +98,13 @@ export class AdminController {
         maternalSurname: true,
         displayName: true,
         phoneE164: true,
-        role: true,
         status: true,
-        coverageAlerts: true,
         optInAt: true,
+        // El rol y la preferencia de avisos son del vínculo con este punto.
+        memberships: {
+          where: { locationId: id },
+          select: { role: true, coverageAlerts: true, isPrimary: true },
+        },
         maritalStatus: true,
         congregation: true,
         circuit: true,
@@ -118,6 +121,14 @@ export class AdminController {
         },
       },
     });
+
+    // Se aplana la membresía para que el panel reciba la misma forma de antes.
+    return padron.map(({ memberships, ...persona }) => ({
+      ...persona,
+      role: memberships[0]?.role ?? 'PARTICIPANT',
+      coverageAlerts: memberships[0]?.coverageAlerts ?? true,
+      isPrimaryLocation: memberships[0]?.isPrimary ?? false,
+    }));
   }
 
   /** Estado civil y cónyuge de un participante. */
@@ -345,7 +356,6 @@ export class AdminController {
         paternalSurname: true,
         maternalSurname: true,
         displayName: true,
-        role: true,
       },
       orderBy: [...PADRON_ORDER],
     });

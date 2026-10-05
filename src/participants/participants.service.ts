@@ -11,6 +11,7 @@ import { displayName, fullName, PADRON_ORDER } from '../common/names/person-name
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MembershipsService } from './memberships.service';
 import { OrganizationFieldsService } from './organization-fields.service';
 
 @Injectable()
@@ -21,6 +22,7 @@ export class ParticipantsService {
     private readonly time: TimeService,
     private readonly audit: AuditService,
     private readonly organization: OrganizationFieldsService,
+    private readonly memberships: MembershipsService,
   ) {}
 
   /** Busca por teléfono aceptando las variantes del formato mexicano. */
@@ -31,18 +33,11 @@ export class ParticipantsService {
   }
 
   /**
-   * Punto de exhibición al que pertenece. Hoy hay uno solo, pero el sistema ya
-   * lo resuelve por membresía para que agregar más no obligue a rehacer nada.
+   * Punto que se asume cuando alguien escribe sin decir de cuál habla.
+   * La lógica vive en MembershipsService, dueño de las invariantes del vínculo.
    */
   async primaryLocationId(participantId: string): Promise<string> {
-    const membership = await this.prisma.locationMembership.findFirst({
-      where: { participantId, active: true },
-      orderBy: { createdAt: 'asc' },
-    });
-    if (!membership) {
-      throw new NotFoundException('El participante no pertenece a ningún punto de exhibición');
-    }
-    return membership.locationId;
+    return this.memberships.primaryLocationId(participantId);
   }
 
   /** Alta desde el panel o desde WhatsApp por un encargado. */
@@ -63,16 +58,8 @@ export class ParticipantsService {
 
     const existing = await this.findByPhone(phoneE164);
     if (existing) {
-      await this.prisma.locationMembership.upsert({
-        where: {
-          locationId_participantId: {
-            locationId: params.locationId,
-            participantId: existing.id,
-          },
-        },
-        create: { locationId: params.locationId, participantId: existing.id },
-        update: { active: true },
-      });
+      // Ya está en el padrón: solo se le suma este punto, conservando los demás.
+      await this.memberships.join(existing.id, params.locationId, { role: params.role });
       return existing;
     }
 
@@ -84,10 +71,11 @@ export class ParticipantsService {
         displayName: params.displayName?.trim() || null,
         ...(await this.organization.canonicalAll(params)),
         phoneE164,
-        role: params.role ?? ParticipantRole.PARTICIPANT,
-        memberships: { create: { locationId: params.locationId } },
       },
     });
+
+    // El rol vive en el vínculo, así que la membresía se crea aparte.
+    await this.memberships.join(participant.id, params.locationId, { role: params.role });
 
     await this.audit.record({
       actorType: params.createdById ? ActorType.SUPERVISOR : ActorType.ADMIN,
@@ -128,11 +116,16 @@ export class ParticipantsService {
     await this.prisma.participant.update({ where: { id: participantId }, data: { status } });
   }
 
-  async setCoverageAlerts(participantId: string, enabled: boolean): Promise<void> {
-    await this.prisma.participant.update({
-      where: { id: participantId },
-      data: { coverageAlerts: enabled },
-    });
+  /**
+   * Preferencia de avisos **en un punto**: alguien puede querer enterarse de las
+   * vacantes de su punto habitual y no de los demás.
+   */
+  async setCoverageAlerts(
+    participantId: string,
+    locationId: string,
+    enabled: boolean,
+  ): Promise<void> {
+    await this.memberships.setCoverageAlerts(participantId, locationId, enabled);
   }
 
   /**

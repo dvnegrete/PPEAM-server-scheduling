@@ -59,7 +59,8 @@ export class SupervisorFlow {
     action: string,
     args: string[],
   ): Promise<void> {
-    if (!(await this.supervisors.isSupervisor(participant.id))) {
+    // Ser encargado es del vínculo con el punto, no de la persona.
+    if (!(await this.supervisors.isSupervisor(participant.id, locationId))) {
       await this.send(participant, this.composer.notUnderstood(participant.phoneE164));
       return;
     }

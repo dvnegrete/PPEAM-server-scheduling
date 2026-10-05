@@ -122,6 +122,7 @@ export class RemindersService {
       );
 
       const delivered = await this.notifications.sendToParticipant(assignment.participant, {
+        locationId: location.id,
         interactive: (to) =>
           this.composer.reminder(to, greetingName(assignment.participant), label, assignment.id),
         template: {

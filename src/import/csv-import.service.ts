@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
+import { MembershipsService } from '../participants/memberships.service';
 import { OrganizationFieldsService } from '../participants/organization-fields.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -40,6 +41,7 @@ export class CsvImportService {
     private readonly audit: AuditService,
     private readonly participants: ParticipantsService,
     private readonly organization: OrganizationFieldsService,
+    private readonly memberships: MembershipsService,
   ) {}
 
   /**
@@ -216,8 +218,6 @@ export class CsvImportService {
             ...(congregacion ? { congregation: organizacion.congregation } : {}),
             ...(circuito ? { circuit: organizacion.circuit } : {}),
             ...(ciudad ? { city: organizacion.city } : {}),
-            role,
-            coverageAlerts,
             // Un consentimiento ya registrado no se sobrescribe con la fecha de
             // una reimportación: interesa cuándo se obtuvo por primera vez.
             optInAt: hasConsent ? (existing.optInAt ?? this.time.now()) : null,
@@ -225,21 +225,14 @@ export class CsvImportService {
             ...(civilRaw ? { maritalStatus } : {}),
           },
         });
-        await this.prisma.locationMembership.upsert({
-          where: {
-            locationId_participantId: {
-              locationId: options.locationId,
-              participantId: existing.id,
-            },
-          },
-          create: { locationId: options.locationId, participantId: existing.id },
-          update: { active: true },
-        });
+        // El rol y la preferencia de avisos son del vínculo con este punto: si la
+        // persona atiende otro, allá conserva los suyos.
+        await this.memberships.join(existing.id, options.locationId, { role, coverageAlerts });
         result.updated += 1;
         continue;
       }
 
-      await this.prisma.participant.create({
+      const creado = await this.prisma.participant.create({
         data: {
           firstName,
           paternalSurname,
@@ -247,13 +240,11 @@ export class CsvImportService {
           displayName: displayNameRaw || null,
           ...organizacion,
           phoneE164,
-          role,
-          coverageAlerts,
           optInAt: hasConsent ? this.time.now() : null,
           maritalStatus,
-          memberships: { create: { locationId: options.locationId } },
         },
       });
+      await this.memberships.join(creado.id, options.locationId, { role, coverageAlerts });
       result.created += 1;
     }
 

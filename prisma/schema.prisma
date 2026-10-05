@@ -162,6 +162,7 @@ model Location {
   supervisorWindows SupervisorWindow[]
   supervisorTasks   SupervisorTask[]
   questionThreads   QuestionThread[]
+  adminAccess       AdminLocationAccess[]
 
   @@map("locations")
 }
@@ -187,11 +188,8 @@ model Participant {
   /// Teléfono normalizado a E.164 (+52...). Es la llave natural en WhatsApp.
   phoneE164 String @unique @map("phone_e164")
 
+  /// El estado sí es de la persona: si se da de baja, lo es en todos los puntos.
   status ParticipantStatus @default(ACTIVE)
-  role   ParticipantRole   @default(PARTICIPANT)
-
-  /// Si acepta recibir avisos de vacantes por DM.
-  coverageAlerts Boolean @default(true) @map("coverage_alerts")
 
   /// Momento en que aceptó recibir mensajes (requisito de política de Meta).
   optInAt DateTime? @map("opt_in_at")
@@ -250,11 +248,27 @@ model Participant {
   @@map("participants")
 }
 
-/// Pertenencia de un participante a un punto de exhibición (soporta varios puntos).
+/// Pertenencia de un participante a un punto de exhibición.
+///
+/// Es la tabla de unión que hace la relación muchos a muchos: una persona puede
+/// atender varios puntos y un punto tiene muchas personas. Lo que depende del
+/// vínculo vive aquí, no en la persona: alguien puede ser encargado en un punto
+/// y solo participante en otro, y querer avisos de uno y no del otro.
 model LocationMembership {
   id            String @id @default(cuid())
   locationId    String @map("location_id")
   participantId String @map("participant_id")
+
+  /// Rol en ESTE punto.
+  role ParticipantRole @default(PARTICIPANT)
+
+  /// Si acepta avisos de vacantes de ESTE punto.
+  coverageAlerts Boolean @default(true) @map("coverage_alerts")
+
+  /// Punto que se asume cuando la persona escribe sin decir de cuál habla.
+  /// Un índice único parcial garantiza que solo haya uno por persona; se crea a
+  /// mano en la migración porque Prisma no declara índices con condición.
+  isPrimary Boolean @default(false) @map("is_primary")
 
   active    Boolean  @default(true)
   createdAt DateTime @default(now()) @map("created_at")
@@ -263,6 +277,8 @@ model LocationMembership {
   participant Participant @relation(fields: [participantId], references: [id], onDelete: Cascade)
 
   @@unique([locationId, participantId])
+  @@index([participantId, isPrimary])
+  @@index([locationId, role, active])
   @@map("location_memberships")
 }
 
@@ -700,6 +716,24 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Puntos a los que un usuario del panel tiene acceso.
+///
+/// Mientras un administrador no tenga ninguna fila aquí, ve todos los puntos.
+/// La tabla existe para que restringirlo más adelante no requiera migración.
+model AdminLocationAccess {
+  id          String @id @default(cuid())
+  adminUserId String @map("admin_user_id")
+  locationId  String @map("location_id")
+
+  createdAt DateTime @default(now()) @map("created_at")
+
+  adminUser AdminUser @relation(fields: [adminUserId], references: [id], onDelete: Cascade)
+  location  Location  @relation(fields: [locationId], references: [id], onDelete: Cascade)
+
+  @@unique([adminUserId, locationId])
+  @@map("admin_location_access")
+}
+
 /// Usuario del panel web (separado del padrón de WhatsApp).
 model AdminUser {
   id           String @id @default(cuid())
@@ -719,6 +753,8 @@ model AdminUser {
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  locationAccess AdminLocationAccess[]
 
   @@map("admin_users")
 }

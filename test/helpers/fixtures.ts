@@ -66,12 +66,13 @@ export async function createParticipant(
     data: {
       ...partirNombre(fullName),
       phoneE164: `+5255${String(phoneCounter).padStart(8, '0')}`,
-      role,
       optInAt: new Date(),
     },
   });
+  // El rol es del vínculo con el punto, no de la persona. La primera membresía
+  // queda como principal, igual que hace MembershipsService.
   await prisma.locationMembership.create({
-    data: { locationId, participantId: participant.id },
+    data: { locationId, participantId: participant.id, role, isPrimary: true },
   });
   return participant;
 }

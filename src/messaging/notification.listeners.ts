@@ -63,6 +63,7 @@ export class NotificationListeners {
     ).slice(0, settings.broadcastBatchSize);
 
     const sent = await this.notifications.sendMany(audience, (participant) => ({
+      locationId: event.locationId,
       interactive: (to) =>
         this.composer.coverageBroadcast(
           to,
@@ -102,6 +103,7 @@ export class NotificationListeners {
   @OnEvent(DOMAIN_EVENTS.COVERAGE_OFFER_APPROVED)
   async onCoverageApproved(event: CoverageDecisionEvent): Promise<void> {
     await this.notifications.send(event.participantId, {
+      locationId: event.locationId,
       interactive: (to) =>
         this.composer.coverageApproved(to, event.participantName, event.shiftLabel),
       template: {
@@ -122,6 +124,7 @@ export class NotificationListeners {
       if (!participant) continue;
 
       await this.notifications.sendToParticipant(participant, {
+        locationId: event.locationId,
         interactive: (to) =>
           this.composer.coverageNotSelected(to, greetingName(participant), event.shiftLabel),
         template: {
@@ -138,6 +141,7 @@ export class NotificationListeners {
   async onShiftCancelled(event: ShiftCancelledEvent): Promise<void> {
     for (const participantId of event.affectedParticipantIds) {
       await this.notifications.send(participantId, {
+        locationId: event.locationId,
         interactive: (to) => this.composer.shiftCancelledNotice(to, event.shiftLabel, event.reason),
         template: {
           name: WA_TEMPLATES.TURNO_CANCELADO,
@@ -152,6 +156,7 @@ export class NotificationListeners {
   @OnEvent(DOMAIN_EVENTS.QUESTION_ANSWERED)
   async onQuestionAnswered(event: QuestionAnsweredEvent): Promise<void> {
     await this.notifications.send(event.participantId, {
+      locationId: event.locationId,
       interactive: (to) =>
         this.composer.answerFromSupervisor(to, event.supervisorName, event.answer),
     });
@@ -180,6 +185,7 @@ export class NotificationListeners {
     }
 
     await this.notifications.sendMany(recipients, (supervisor) => ({
+      locationId: event.locationId,
       interactive: (to) => this.composer.supervisorTaskNotice(to, task, event.escalated),
       template: {
         // Fuera de la ventana de 24 h, el resumen y el botón de la plantilla son

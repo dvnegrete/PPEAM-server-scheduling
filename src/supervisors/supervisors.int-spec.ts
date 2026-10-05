@@ -95,7 +95,7 @@ describe('Encargados: guardia y cola de solicitudes (integración)', () => {
       await supervisors.addWindow(ana.id, location.id, MARTES, 8 * 60, 14 * 60);
 
       expect(await supervisors.onDutyNow(location.id)).toHaveLength(0);
-      expect(await supervisors.isSupervisor(ana.id)).toBe(false);
+      expect(await supervisors.isSupervisor(ana.id, location.id)).toBe(false);
     });
 
     it('informa su estado de guardia al propio encargado', async () => {

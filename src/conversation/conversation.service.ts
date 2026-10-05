@@ -120,7 +120,7 @@ export class ConversationService {
 
     // Fase 2: aquí entra la interpretación con Claude del texto libre. Mientras
     // tanto, el menú evita que la persona se quede sin saber qué hacer.
-    await this.showMenu(participant);
+    await this.showMenu(participant, locationId);
   }
 
   // -------------------------------------------------------------------------
@@ -138,7 +138,7 @@ export class ConversationService {
       case ACTIONS.MENU:
       case ACTIONS.CANCEL_ABORT:
         await this.sessions.clear(participant.id);
-        return this.showMenu(participant);
+        return this.showMenu(participant, locationId);
 
       case ACTIONS.MY_SHIFTS:
         return this.showMyShifts(participant);
@@ -178,8 +178,10 @@ export class ConversationService {
   // Acciones del participante
   // -------------------------------------------------------------------------
 
-  private async showMenu(participant: Participant): Promise<void> {
-    const isSupervisor = await this.supervisors.isSupervisor(participant.id);
+  private async showMenu(participant: Participant, locationId: string): Promise<void> {
+    // Las opciones de encargado dependen del punto: alguien puede serlo en uno
+    // y solo participante en otro.
+    const isSupervisor = await this.supervisors.isSupervisor(participant.id, locationId);
     await this.reply(
       participant.id,
       this.composer.mainMenu(participant.phoneE164, greetingName(participant), isSupervisor),

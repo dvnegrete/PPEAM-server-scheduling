@@ -4,7 +4,11 @@ import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** Roles que pueden atender solicitudes de participantes. */
+/**
+ * Roles que pueden atender solicitudes de participantes.
+ * El rol es del vínculo con cada punto, no de la persona: alguien puede ser
+ * encargado en un punto y solo participante en otro.
+ */
 const SUPERVISOR_ROLES: ParticipantRole[] = [ParticipantRole.SUPERVISOR, ParticipantRole.ADMIN];
 
 @Injectable()
@@ -33,48 +37,66 @@ export class SupervisorsService {
     const weekday = this.time.weekday(now);
     const minuteOfDay = now.hour * 60 + now.minute;
 
-    const supervisors = await this.prisma.participant.findMany({
+    // Se consulta desde la membresía porque el rol de encargado es de este
+    // punto: la misma persona puede no serlo en otro.
+    const membresias = await this.prisma.locationMembership.findMany({
       where: {
+        locationId,
+        active: true,
         role: { in: SUPERVISOR_ROLES },
-        status: ParticipantStatus.ACTIVE,
-        memberships: { some: { locationId, active: true } },
+        participant: { status: ParticipantStatus.ACTIVE },
       },
       include: {
-        presence: true,
-        supervisorWindows: { where: { locationId, active: true, weekday } },
+        participant: {
+          include: {
+            presence: true,
+            supervisorWindows: { where: { locationId, active: true, weekday } },
+          },
+        },
       },
     });
 
-    return supervisors.filter((supervisor) => {
-      const presence = supervisor.presence;
-      const overrideActive =
-        presence && (presence.until === null || presence.until > this.time.now());
+    return membresias
+      .map((membresia) => membresia.participant)
+      .filter((supervisor) => {
+        const presence = supervisor.presence;
+        const overrideActive =
+          presence && (presence.until === null || presence.until > this.time.now());
 
-      if (overrideActive) return presence.available;
+        // La disponibilidad declarada a mano es de la persona, no del punto:
+        // quien dice «ahora no puedo» no puede atender ninguno.
+        if (overrideActive) return presence.available;
 
-      return supervisor.supervisorWindows.some((window) =>
-        this.time.isMinuteWithinWindow(minuteOfDay, window.startMinute, window.endMinute),
-      );
-    });
+        return supervisor.supervisorWindows.some((window) =>
+          this.time.isMinuteWithinWindow(minuteOfDay, window.startMinute, window.endMinute),
+        );
+      });
   }
 
   /** Todos los encargados del punto, estén o no de guardia (para escalar). */
   async allSupervisors(locationId: string): Promise<Participant[]> {
-    return this.prisma.participant.findMany({
+    const membresias = await this.prisma.locationMembership.findMany({
       where: {
+        locationId,
+        active: true,
         role: { in: SUPERVISOR_ROLES },
-        status: ParticipantStatus.ACTIVE,
-        memberships: { some: { locationId, active: true } },
+        participant: { status: ParticipantStatus.ACTIVE },
       },
+      include: { participant: true },
     });
+    return membresias.map((membresia) => membresia.participant);
   }
 
-  async isSupervisor(participantId: string): Promise<boolean> {
-    const participant = await this.prisma.participant.findUnique({
-      where: { id: participantId },
-      select: { role: true },
+  /**
+   * Si alguien es encargado **en ese punto**. Recibe el punto porque ser
+   * encargado dejó de ser una propiedad de la persona para ser una del vínculo.
+   */
+  async isSupervisor(participantId: string, locationId: string): Promise<boolean> {
+    const membresia = await this.prisma.locationMembership.findUnique({
+      where: { locationId_participantId: { locationId, participantId } },
+      select: { role: true, active: true },
     });
-    return participant ? SUPERVISOR_ROLES.includes(participant.role) : false;
+    return membresia?.active ? SUPERVISOR_ROLES.includes(membresia.role) : false;
   }
 
   /** "Estoy disponible" — opcionalmente hasta una hora determinada. */

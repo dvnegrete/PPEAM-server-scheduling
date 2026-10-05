@@ -53,8 +53,10 @@ describe('Importación desde CSV (integración)', () => {
 
       const elena = await ctx.prisma.participant.findFirstOrThrow({
         where: { firstName: 'Elena' },
+        include: { memberships: true },
       });
-      expect(elena.role).toBe('SUPERVISOR');
+      // El rol vive en el vínculo con el punto, no en la persona.
+      expect(elena.memberships[0].role).toBe('SUPERVISOR');
       // El "1" que agrega WhatsApp a los móviles mexicanos se normaliza.
       expect(elena.phoneE164).toBe('+525599887766');
     });
@@ -248,8 +250,10 @@ describe('Importación desde CSV (integración)', () => {
       const csv = 'nombre,apellido_paterno,telefono,alertas\nAna,López,5512345678,no';
       await importer.importParticipants(csv, { locationId });
 
-      const ana = await ctx.prisma.participant.findFirstOrThrow();
-      expect(ana.coverageAlerts).toBe(false);
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        include: { memberships: true },
+      });
+      expect(ana.memberships[0].coverageAlerts).toBe(false);
     });
   });
 

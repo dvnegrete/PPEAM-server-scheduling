@@ -10,6 +10,8 @@ import { OutgoingMessage } from '../whatsapp/types/message.types';
 import { ConversationWindowService } from './conversation-window.service';
 
 export interface NotificationSpec {
+  /** Punto que origina el aviso; define qué política de mensajería se aplica. */
+  locationId?: string;
   /** Mensaje enriquecido, válido solo dentro de la ventana de 24 horas. */
   interactive: (to: string) => OutgoingMessage;
   /** Plantilla aprobada, para cuando la ventana está cerrada. */
@@ -35,20 +37,35 @@ export class NotificationService {
    * Con una cuenta de prueba de Meta solo se puede escribir a los números dados de
    * alta; enviar a cualquier otro se rechaza y ensucia el outbox con fallos que no
    * dicen nada nuevo. Es preferible no encolarlos y dejar constancia en el log.
+   *
+   * `locationId` es el punto que **origina** el aviso. Importa cuando alguien
+   * atiende varios: la política que manda es la del punto del que se le escribe,
+   * no la de su punto principal, que podría tener otra configuración.
    */
-  private async deliverableIds(participants: Participant[]): Promise<Set<string>> {
+  private async deliverableIds(
+    participants: Participant[],
+    locationId?: string,
+  ): Promise<Set<string>> {
     if (participants.length === 0) return new Set();
 
-    const memberships = await this.prisma.locationMembership.findMany({
-      where: { participantId: { in: participants.map((item) => item.id) }, active: true },
-      select: { participantId: true, locationId: true },
-      orderBy: { createdAt: 'asc' },
-    });
-
     const locationOf = new Map<string, string>();
-    for (const membership of memberships) {
-      if (!locationOf.has(membership.participantId)) {
-        locationOf.set(membership.participantId, membership.locationId);
+
+    if (locationId) {
+      for (const participant of participants) {
+        locationOf.set(participant.id, locationId);
+      }
+    } else {
+      // Sin punto de origen se cae al principal de cada quien, que es el que el
+      // sistema asume cuando nadie dijo de qué punto se trata.
+      const memberships = await this.prisma.locationMembership.findMany({
+        where: { participantId: { in: participants.map((item) => item.id) }, active: true },
+        select: { participantId: true, locationId: true, isPrimary: true },
+        orderBy: [{ isPrimary: 'desc' }, { createdAt: 'asc' }],
+      });
+      for (const membership of memberships) {
+        if (!locationOf.has(membership.participantId)) {
+          locationOf.set(membership.participantId, membership.locationId);
+        }
       }
     }
 
@@ -114,7 +131,7 @@ export class NotificationService {
     spec: NotificationSpec,
     tx?: Prisma.TransactionClient,
   ): Promise<boolean> {
-    const deliverable = await this.deliverableIds([participant]);
+    const deliverable = await this.deliverableIds([participant], spec.locationId);
     if (!deliverable.has(participant.id)) return false;
 
     const open = await this.window.isOpen(participant.id);
@@ -156,7 +173,10 @@ export class NotificationService {
   ): Promise<number> {
     if (participants.length === 0) return 0;
 
-    const deliverable = await this.deliverableIds(participants);
+    // Todas las especificaciones de una difusión vienen del mismo punto, así que
+    // basta mirar la primera para saber qué política aplicar.
+    const origen = build(participants[0]).locationId;
+    const deliverable = await this.deliverableIds(participants, origen);
     const destinatarios = participants.filter((item) => deliverable.has(item.id));
     if (destinatarios.length === 0) return 0;
 
@@ -193,16 +213,23 @@ export class NotificationService {
     return sent;
   }
 
-  /** Destinatarios de una difusión de vacante. */
+  /**
+   * Destinatarios de una difusión de vacante.
+   *
+   * La preferencia de avisos se lee de la membresía: quien atiende dos puntos
+   * puede querer enterarse de las vacantes de uno y no de las del otro.
+   */
   async broadcastAudience(locationId: string, excludeIds: string[]): Promise<Participant[]> {
-    return this.prisma.participant.findMany({
+    const membresias = await this.prisma.locationMembership.findMany({
       where: {
-        status: ParticipantStatus.ACTIVE,
+        locationId,
+        active: true,
         coverageAlerts: true,
-        optInAt: { not: null },
-        id: { notIn: excludeIds },
-        memberships: { some: { locationId, active: true } },
+        participantId: { notIn: excludeIds },
+        participant: { status: ParticipantStatus.ACTIVE, optInAt: { not: null } },
       },
+      include: { participant: true },
     });
+    return membresias.map((membresia) => membresia.participant);
   }
 }
