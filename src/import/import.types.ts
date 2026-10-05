@@ -2,7 +2,30 @@ export interface RowError {
   /** Número de fila del archivo, contando el encabezado como fila 1. */
   row: number;
   message: string;
+  /**
+   * Quién es esa fila, con los datos que se alcanzaron a leer: «Ana López ·
+   * 55 1234 5678». Sin esto, un error en un archivo de cien filas obliga a
+   * contar renglones en la hoja de cálculo para saber a quién corregir.
+   */
+  label?: string;
   data?: Record<string, string>;
+}
+
+/** Arma la etiqueta de una fila con lo que haya disponible. */
+export function rowLabel(row: Record<string, string>): string {
+  const nombre = [
+    row.nombre ?? row.name,
+    row.apellido_paterno ?? row['apellido paterno'] ?? row.paternal_surname,
+    row.apellido_materno ?? row['apellido materno'] ?? row.maternal_surname,
+  ]
+    .map((parte) => parte?.trim())
+    .filter(Boolean)
+    .join(' ');
+
+  const telefono = (row.telefono ?? row['teléfono'] ?? row.phone ?? '').trim();
+
+  const partes = [nombre, telefono].filter(Boolean);
+  return partes.length > 0 ? partes.join(' · ') : '(fila sin datos legibles)';
 }
 
 export interface ImportResult {

@@ -84,6 +84,30 @@ export class OrganizationFieldsService {
     };
   }
 
+  /**
+   * Normalizador para procesar muchas filas de una vez.
+   *
+   * `canonical` consulta la base en cada llamada, lo cual está bien para una
+   * captura suelta pero no para una importación: con cien filas por tres campos
+   * son cientos de consultas, y contra una base remota eso tarda tanto que el
+   * proxy corta la petición antes de que termine.
+   *
+   * Este normalizador carga los valores conocidos una sola vez y resuelve en
+   * memoria. Además **aprende** los que va viendo, para que las grafías
+   * equivalentes dentro del mismo archivo se alineen entre sí igual que lo
+   * harían contra la base.
+   */
+  async createNormalizer(): Promise<OrganizationNormalizer> {
+    const conocidos = new Map<OrganizationField, Map<string, string>>();
+
+    for (const field of ORGANIZATION_FIELDS) {
+      const valores = await this.knownValues(field);
+      conocidos.set(field, new Map(valores.map((valor) => [clave(valor), valor])));
+    }
+
+    return new OrganizationNormalizer(conocidos);
+  }
+
   /** Cuántas personas hay por valor, para los reportes. */
   async countByField(
     field: OrganizationField,
@@ -103,5 +127,38 @@ export class OrganizationFieldsService {
         if (b.value === null) return -1;
         return a.value.localeCompare(b.value, 'es-MX');
       });
+  }
+}
+
+/** Resuelve los tres campos en memoria, sin volver a la base por cada fila. */
+export class OrganizationNormalizer {
+  constructor(private readonly conocidos: Map<OrganizationField, Map<string, string>>) {}
+
+  canonical(field: OrganizationField, valor: string | null | undefined): string | null {
+    const limpio = valor?.trim().replace(/\s+/g, ' ');
+    if (!limpio) return null;
+
+    const porClave = this.conocidos.get(field) ?? new Map<string, string>();
+    const k = clave(limpio);
+    const existente = porClave.get(k);
+    if (existente) return existente;
+
+    // Valor nuevo: queda registrado para que las filas siguientes del mismo
+    // archivo se alineen con esta grafía.
+    porClave.set(k, limpio);
+    this.conocidos.set(field, porClave);
+    return limpio;
+  }
+
+  canonicalAll(valores: {
+    congregation?: string | null;
+    circuit?: string | null;
+    city?: string | null;
+  }): { congregation: string | null; circuit: string | null; city: string | null } {
+    return {
+      congregation: this.canonical('congregation', valores.congregation),
+      circuit: this.canonical('circuit', valores.circuit),
+      city: this.canonical('city', valores.city),
+    };
   }
 }

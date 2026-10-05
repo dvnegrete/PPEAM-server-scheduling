@@ -1,16 +1,16 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActorType, MaritalStatus } from '@prisma/client';
+import { ActorType, MaritalStatus, ParticipantRole } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
-import { MembershipsService } from '../participants/memberships.service';
 import { OrganizationFieldsService } from '../participants/organization-fields.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ASSIGNMENT_COLUMNS,
   emptyResult,
+  rowLabel,
   ImportResult,
   MARITAL_BY_NAME,
   PARTICIPANT_COLUMNS,
@@ -18,6 +18,32 @@ import {
   SpouseLink,
   WEEKDAY_BY_NAME,
 } from './import.types';
+
+/** Fila ya validada, lista para escribirse en lote. */
+interface FilaValidada {
+  phoneE164: string;
+  datos: {
+    firstName: string;
+    paternalSurname: string;
+    maternalSurname: string | null;
+    displayName: string | null;
+    congregation: string | null;
+    circuit: string | null;
+    city: string | null;
+    maritalStatus: MaritalStatus;
+  };
+  role: ParticipantRole;
+  coverageAlerts: boolean;
+  hasConsent: boolean;
+  /** Qué columnas venían en el archivo, para no borrar lo capturado a mano. */
+  traia: {
+    displayName: boolean;
+    congregation: boolean;
+    circuit: boolean;
+    city: boolean;
+    maritalStatus: boolean;
+  };
+}
 
 interface ImportOptions {
   locationId: string;
@@ -43,7 +69,6 @@ export class CsvImportService {
     private readonly audit: AuditService,
     private readonly participants: ParticipantsService,
     private readonly organization: OrganizationFieldsService,
-    private readonly memberships: MembershipsService,
   ) {}
 
   /**
@@ -65,6 +90,12 @@ export class CsvImportService {
     const result = emptyResult(options.dryRun ?? false);
     const rows = this.parseCsv(csv, result, PARTICIPANT_COLUMNS);
     const vinculos: SpouseLink[] = [];
+
+    // Los valores conocidos se cargan una sola vez. Consultarlos por cada fila
+    // hacía que un archivo de cien renglones tardara minutos contra una base
+    // remota, y el proxy cortaba la petición antes de que terminara.
+    const normalizador = await this.organization.createNormalizer();
+    const validas: FilaValidada[] = [];
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
@@ -91,7 +122,12 @@ export class CsvImportService {
       const rawPhone = (row.telefono ?? row.teléfono ?? row.phone ?? '').trim();
 
       if (!firstName) {
-        result.errors.push({ row: rowNumber, message: 'Falta el nombre', data: row });
+        result.errors.push({
+          row: rowNumber,
+          message: 'Falta el nombre',
+          label: rowLabel(row),
+          data: row,
+        });
         continue;
       }
       if (!paternalSurname) {
@@ -103,12 +139,18 @@ export class CsvImportService {
           message:
             'Falta el apellido paterno. El padrón ahora se captura en tres columnas: ' +
             'nombre, apellido_paterno y apellido_materno (esta última opcional)',
+          label: rowLabel(row),
           data: row,
         });
         continue;
       }
       if (!rawPhone) {
-        result.errors.push({ row: rowNumber, message: 'Falta el teléfono', data: row });
+        result.errors.push({
+          row: rowNumber,
+          message: 'Falta el teléfono',
+          label: rowLabel(row),
+          data: row,
+        });
         continue;
       }
 
@@ -117,6 +159,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `El teléfono "${rawPhone}" no es válido`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -127,6 +170,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Rol desconocido "${roleRaw}". Usa participante, encargado o admin`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -147,7 +191,7 @@ export class CsvImportService {
       ).trim();
       const circuito = (row.circuito ?? row.circuit ?? '').trim();
       const ciudad = (row.ciudad ?? row.city ?? '').trim();
-      const organizacion = await this.organization.canonicalAll({
+      const organizacion = normalizador.canonicalAll({
         congregation: congregacion,
         circuit: circuito,
         city: ciudad,
@@ -158,6 +202,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Estado civil desconocido "${civilRaw}". Usa soltero, casado, viudo o separado`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -176,6 +221,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: 'Se indicó cónyuge pero el estado civil no es «casado»',
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -189,6 +235,7 @@ export class CsvImportService {
           result.errors.push({
             row: rowNumber,
             message: `El teléfono del cónyuge "${spousePhoneRaw}" no es válido`,
+            label: rowLabel(row),
             data: row,
           });
           continue;
@@ -198,64 +245,183 @@ export class CsvImportService {
         vinculos.push({ row: rowNumber, phoneE164, spouseName: spouseNameRaw, data: row });
       }
 
-      if (options.dryRun) {
-        const exists = await this.prisma.participant.findFirst({
-          where: { phoneE164: { in: this.phone.lookupVariants(phoneE164) } },
-        });
-        if (exists) result.updated += 1;
-        else result.created += 1;
-        continue;
-      }
-
-      const existing = await this.prisma.participant.findFirst({
-        where: { phoneE164: { in: this.phone.lookupVariants(phoneE164) } },
-      });
-
-      if (existing) {
-        await this.prisma.participant.update({
-          where: { id: existing.id },
-          data: {
-            firstName,
-            paternalSurname,
-            maternalSurname: maternalSurname || null,
-            ...(displayNameRaw ? { displayName: displayNameRaw } : {}),
-            // Una columna vacía no borra un dato ya capturado a mano.
-            ...(congregacion ? { congregation: organizacion.congregation } : {}),
-            ...(circuito ? { circuit: organizacion.circuit } : {}),
-            ...(ciudad ? { city: organizacion.city } : {}),
-            // Un consentimiento ya registrado no se sobrescribe con la fecha de
-            // una reimportación: interesa cuándo se obtuvo por primera vez.
-            optInAt: hasConsent ? (existing.optInAt ?? this.time.now()) : null,
-            // Una columna vacía no borra un estado civil ya capturado a mano.
-            ...(civilRaw ? { maritalStatus } : {}),
-          },
-        });
-        // El rol y la preferencia de avisos son del vínculo con este punto: si la
-        // persona atiende otro, allá conserva los suyos.
-        await this.memberships.join(existing.id, options.locationId, { role, coverageAlerts });
-        result.updated += 1;
-        continue;
-      }
-
-      const creado = await this.prisma.participant.create({
-        data: {
+      // La fila quedó validada: se guarda para escribirla en lote más abajo.
+      validas.push({
+        phoneE164,
+        datos: {
           firstName,
           paternalSurname,
           maternalSurname: maternalSurname || null,
           displayName: displayNameRaw || null,
-          ...organizacion,
-          phoneE164,
-          optInAt: hasConsent ? this.time.now() : null,
+          congregation: organizacion.congregation,
+          circuit: organizacion.circuit,
+          city: organizacion.city,
           maritalStatus,
         },
+        role,
+        coverageAlerts,
+        hasConsent,
+        // Qué columnas venían en el archivo: una vacía no debe borrar un dato
+        // que se capturó a mano en el panel.
+        traia: {
+          displayName: Boolean(displayNameRaw),
+          congregation: Boolean(congregacion),
+          circuit: Boolean(circuito),
+          city: Boolean(ciudad),
+          maritalStatus: Boolean(civilRaw),
+        },
       });
-      await this.memberships.join(creado.id, options.locationId, { role, coverageAlerts });
-      result.created += 1;
     }
 
+    await this.writeParticipants(validas, result, options);
     await this.resolveSpouseLinks(vinculos, result, options);
     await this.recordAudit('participants', result, options);
     return result;
+  }
+
+  /**
+   * Escribe las filas validadas en el menor número de viajes posible.
+   *
+   * Antes cada fila hacía ocho consultas —buscar, escribir y una transacción
+   * completa para la membresía—, así que un padrón de ciento treinta renglones
+   * sumaba más de mil viajes a la base. Contra una base remota eso tardaba cerca
+   * de minuto y medio y el proxy cortaba la petición: el navegador veía un error
+   * aunque el servidor terminara bien.
+   *
+   * Ahora se precarga lo que hace falta de una vez, los registros nuevos entran
+   * en una sola inserción y las membresías se agrupan por valor.
+   */
+  private async writeParticipants(
+    validas: FilaValidada[],
+    result: ImportResult,
+    options: ImportOptions,
+  ): Promise<void> {
+    if (validas.length === 0) return;
+
+    // Una consulta para saber quiénes ya están en el padrón, con todas las
+    // variantes de cada teléfono.
+    const variantes = validas.flatMap((fila) => this.phone.lookupVariants(fila.phoneE164));
+    const existentes = await this.prisma.participant.findMany({
+      where: { phoneE164: { in: variantes } },
+      include: { memberships: { select: { locationId: true, active: true, isPrimary: true } } },
+    });
+
+    const porTelefono = new Map<string, (typeof existentes)[number]>();
+    for (const persona of existentes) {
+      for (const variante of this.phone.lookupVariants(persona.phoneE164)) {
+        porTelefono.set(variante, persona);
+      }
+    }
+
+    if (result.dryRun) {
+      for (const fila of validas) {
+        if (porTelefono.has(fila.phoneE164)) result.updated += 1;
+        else result.created += 1;
+      }
+      return;
+    }
+
+    const nuevas = validas.filter((fila) => !porTelefono.has(fila.phoneE164));
+    const repetidas = validas.filter((fila) => porTelefono.has(fila.phoneE164));
+
+    // Los nuevos entran en una sola inserción, con sus membresías en otra.
+    if (nuevas.length > 0) {
+      const creados = await this.prisma.participant.createManyAndReturn({
+        data: nuevas.map((fila) => ({
+          ...fila.datos,
+          phoneE164: fila.phoneE164,
+          optInAt: fila.hasConsent ? this.time.now() : null,
+        })),
+        select: { id: true, phoneE164: true },
+      });
+
+      const filaPorTelefono = new Map(nuevas.map((fila) => [fila.phoneE164, fila]));
+      await this.prisma.locationMembership.createMany({
+        data: creados.map((persona) => {
+          const fila = filaPorTelefono.get(persona.phoneE164);
+          return {
+            participantId: persona.id,
+            locationId: options.locationId,
+            role: fila?.role ?? 'PARTICIPANT',
+            coverageAlerts: fila?.coverageAlerts ?? true,
+            // Es su primera membresía, así que es la principal: alguien siempre
+            // necesita un punto por omisión.
+            isPrimary: true,
+          };
+        }),
+      });
+      result.created += creados.length;
+    }
+
+    // Los que ya estaban se actualizan uno por uno, porque cada quien trae
+    // valores distintos; es el único bucle que queda.
+    for (const fila of repetidas) {
+      const persona = porTelefono.get(fila.phoneE164)!;
+      await this.prisma.participant.update({
+        where: { id: persona.id },
+        data: {
+          firstName: fila.datos.firstName,
+          paternalSurname: fila.datos.paternalSurname,
+          maternalSurname: fila.datos.maternalSurname,
+          ...(fila.traia.displayName ? { displayName: fila.datos.displayName } : {}),
+          ...(fila.traia.congregation ? { congregation: fila.datos.congregation } : {}),
+          ...(fila.traia.circuit ? { circuit: fila.datos.circuit } : {}),
+          ...(fila.traia.city ? { city: fila.datos.city } : {}),
+          // Un consentimiento ya registrado conserva su fecha original: interesa
+          // cuándo se obtuvo por primera vez.
+          optInAt: fila.hasConsent ? (persona.optInAt ?? this.time.now()) : null,
+          ...(fila.traia.maritalStatus ? { maritalStatus: fila.datos.maritalStatus } : {}),
+        },
+      });
+      result.updated += 1;
+    }
+
+    // Las membresías de los repetidos: las que faltan se crean juntas y las que
+    // existen se actualizan agrupadas por valor, que son dos o tres grupos.
+    const sinMembresia = repetidas.filter(
+      (fila) =>
+        !porTelefono
+          .get(fila.phoneE164)!
+          .memberships.some((m) => m.locationId === options.locationId),
+    );
+
+    if (sinMembresia.length > 0) {
+      await this.prisma.locationMembership.createMany({
+        data: sinMembresia.map((fila) => {
+          const persona = porTelefono.get(fila.phoneE164)!;
+          return {
+            participantId: persona.id,
+            locationId: options.locationId,
+            role: fila.role,
+            coverageAlerts: fila.coverageAlerts,
+            // Solo es principal si no tenía ninguna activa en otro punto.
+            isPrimary: !persona.memberships.some((m) => m.active),
+          };
+        }),
+        skipDuplicates: true,
+      });
+    }
+
+    const conMembresia = repetidas.filter((fila) => !sinMembresia.includes(fila));
+    const grupos = new Map<string, string[]>();
+    for (const fila of conMembresia) {
+      const clave = `${fila.role}|${fila.coverageAlerts}`;
+      const ids = grupos.get(clave) ?? [];
+      ids.push(porTelefono.get(fila.phoneE164)!.id);
+      grupos.set(clave, ids);
+    }
+
+    for (const [clave, participantIds] of grupos) {
+      const [role, alerts] = clave.split('|');
+      await this.prisma.locationMembership.updateMany({
+        where: { locationId: options.locationId, participantId: { in: participantIds } },
+        data: {
+          active: true,
+          role: role as ParticipantRole,
+          coverageAlerts: alerts === 'true',
+        },
+      });
+    }
   }
 
   /**
@@ -287,6 +453,7 @@ export class CsvImportService {
               message:
                 `No hay ningún participante con el teléfono del cónyuge ` +
                 `(${vinculo.spousePhone}). Inclúyelo en el archivo o anota solo su nombre`,
+              label: rowLabel(vinculo.data),
               data: vinculo.data,
             });
             continue;
@@ -312,6 +479,7 @@ export class CsvImportService {
         result.errors.push({
           row: vinculo.row,
           message: error instanceof Error ? error.message : 'No se pudo registrar el cónyuge',
+          label: rowLabel(vinculo.data),
           data: vinculo.data,
         });
       }
@@ -341,6 +509,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Teléfono inválido o ausente: "${rawPhone}"`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -351,6 +520,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Día desconocido "${dayRaw}". Usa lunes, martes, ... domingo`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -361,6 +531,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Hora de inicio inválida "${startRaw}". Usa formato 7:00`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -371,6 +542,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `Semana inválida "${weekRaw}". Usa 0 (todas) o 1 a 5`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -383,6 +555,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `No hay ningún participante con el teléfono ${rawPhone}. Impórtalo primero`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -402,6 +575,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message: `No existe un turno de ${dayRaw} a las ${startRaw}${weekOfMonth ? ` (semana ${weekOfMonth})` : ''}`,
+          label: rowLabel(row),
           data: row,
         });
         continue;
@@ -433,6 +607,7 @@ export class CsvImportService {
           message:
             `El turno de ${dayRaw} a las ${startRaw} ya tiene ${current} titulares ` +
             `para ${template.capacity} lugares`,
+          label: rowLabel(row),
           data: row,
         });
         continue;

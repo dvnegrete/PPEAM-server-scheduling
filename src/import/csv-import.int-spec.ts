@@ -131,6 +131,89 @@ describe('Importación desde CSV (integración)', () => {
     });
   });
 
+  describe('errores identificables', () => {
+    it('dice de quién es la fila que falló, no solo su número', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono,estado_civil',
+        'Ana,López,5512345678,casada',
+        'Ramón,Gutiérrez,5512345679,comprometido',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].row).toBe(3);
+      // Sin la etiqueta habría que contar renglones en la hoja para saber a
+      // quién corregir.
+      expect(result.errors[0].label).toBe('Ramón Gutiérrez · 5512345679');
+    });
+
+    it('etiqueta también la fila a la que le falta el nombre', async () => {
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\n,Gutiérrez,5512345679',
+        { locationId },
+      );
+
+      expect(result.errors[0].label).toContain('Gutiérrez');
+      expect(result.errors[0].label).toContain('5512345679');
+    });
+
+    it('etiqueta los errores del cónyuge, que salen en la segunda pasada', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono',
+        'Ana,López,5512345678,casada,5599998888',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].label).toBe('Ana López · 5512345678');
+    });
+
+    it('no se queda sin etiqueta cuando la fila viene vacía de datos legibles', async () => {
+      const result = await importer.importParticipants('nombre,apellido_paterno,telefono\n,,', {
+        locationId,
+      });
+
+      expect(result.errors[0].label).toBe('(fila sin datos legibles)');
+    });
+  });
+
+  describe('rendimiento con un padrón completo', () => {
+    it('importa 130 filas sin consultar los valores conocidos en cada una', async () => {
+      const filas = ['nombre,apellido_paterno,telefono,congregacion,circuito,ciudad'];
+      for (let i = 0; i < 130; i += 1) {
+        const telefono = `55${String(10000000 + i).padStart(8, '0')}`;
+        filas.push(`Persona${i},Apellido${i},${telefono},Centro,Monterrey 14,Monterrey`);
+      }
+
+      const inicio = Date.now();
+      const result = await importer.importParticipants(filas.join('\n'), { locationId });
+      const duracion = Date.now() - inicio;
+
+      expect(result.created).toBe(130);
+      expect(result.errors).toHaveLength(0);
+      // Antes, cada fila consultaba la base tres veces solo para normalizar
+      // congregación, circuito y ciudad. Contra una base remota eso bastaba para
+      // que el proxy cortara la petición.
+      expect(duracion).toBeLessThan(15_000);
+    });
+
+    it('sigue alineando las grafías dentro del archivo, ahora en memoria', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono,ciudad',
+        'Ana,López,5512345678,Querétaro',
+        'Beto,Ruiz,5512345679,queretaro',
+        'Carla,Díaz,5512345670,QUERÉTARO',
+      ].join('\n');
+
+      await importer.importParticipants(csv, { locationId });
+
+      const ciudades = await ctx.prisma.participant.findMany({ select: { city: true } });
+      expect(new Set(ciudades.map((p) => p.city))).toEqual(new Set(['Querétaro']));
+    });
+  });
+
   describe('padrón de participantes', () => {
     it('importa nombres y teléfonos en distintos formatos', async () => {
       const csv = [
