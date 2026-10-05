@@ -26,6 +26,16 @@ enum ParticipantStatus {
   INACTIVE
 }
 
+/// Estado civil. UNKNOWN es el valor de partida: un padrón importado no trae el
+/// dato, y asumir «soltero» afirmaría algo que nadie declaró.
+enum MaritalStatus {
+  UNKNOWN
+  SINGLE
+  MARRIED
+  WIDOWED
+  SEPARATED
+}
+
 enum ParticipantRole {
   PARTICIPANT
   SUPERVISOR
@@ -173,6 +183,23 @@ model Participant {
 
   /// Momento en que aceptó recibir mensajes (requisito de política de Meta).
   optInAt DateTime? @map("opt_in_at")
+
+  /// UNKNOWN es el punto de partida de todo padrón importado: distingue a quien
+  /// todavía no se le ha preguntado de quien dijo que no está casado.
+  maritalStatus MaritalStatus @default(UNKNOWN) @map("marital_status")
+
+  /// Cónyuge, cuando también participa en los exhibidores.
+  ///
+  /// La relación se mantiene simétrica desde el servicio (si A apunta a B, B
+  /// apunta a A) y el índice único impide que dos personas declaren al mismo
+  /// cónyuge. Es excluyente con `spouseName`: o el cónyuge está en el padrón y
+  /// hay referencia, o no está y solo se guarda su nombre.
+  spouseId String?      @unique @map("spouse_id")
+  spouse   Participant? @relation("Matrimonio", fields: [spouseId], references: [id], onDelete: SetNull)
+  spouseOf Participant? @relation("Matrimonio")
+
+  /// Nombre del cónyuge cuando NO es participante. Solo el nombre, sin más datos.
+  spouseName String? @map("spouse_name")
 
   notes String?
 

@@ -1,11 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActorType } from '@prisma/client';
+import { ActorType, MaritalStatus } from '@prisma/client';
 import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
+import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { emptyResult, ImportResult, ROLE_BY_NAME, WEEKDAY_BY_NAME } from './import.types';
+import {
+  emptyResult,
+  ImportResult,
+  MARITAL_BY_NAME,
+  ROLE_BY_NAME,
+  SpouseLink,
+  WEEKDAY_BY_NAME,
+} from './import.types';
 
 interface ImportOptions {
   locationId: string;
@@ -29,6 +37,7 @@ export class CsvImportService {
     private readonly phone: PhoneService,
     private readonly time: TimeService,
     private readonly audit: AuditService,
+    private readonly participants: ParticipantsService,
   ) {}
 
   /**
@@ -45,6 +54,7 @@ export class CsvImportService {
   async importParticipants(csv: string, options: ImportOptions): Promise<ImportResult> {
     const result = emptyResult(options.dryRun ?? false);
     const rows = this.parseCsv(csv, result);
+    const vinculos: SpouseLink[] = [];
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
@@ -89,6 +99,51 @@ export class CsvImportService {
       const consentRaw = (row.consentimiento ?? row.consent ?? '').trim().toLowerCase();
       const hasConsent = consentRaw === '' ? true : !['no', 'false', '0'].includes(consentRaw);
 
+      const civilRaw = (row.estado_civil ?? row['estado civil'] ?? '').trim().toLowerCase();
+      if (civilRaw && !MARITAL_BY_NAME[civilRaw]) {
+        result.errors.push({
+          row: rowNumber,
+          message: `Estado civil desconocido "${civilRaw}". Usa soltero, casado, viudo o separado`,
+          data: row,
+        });
+        continue;
+      }
+      const maritalStatus = MARITAL_BY_NAME[civilRaw] ?? MaritalStatus.UNKNOWN;
+
+      const spouseNameRaw = (row.conyuge ?? row['cónyuge'] ?? row.spouse ?? '').trim();
+      const spousePhoneRaw = (
+        row.conyuge_telefono ??
+        row['cónyuge_teléfono'] ??
+        row.spouse_phone ??
+        ''
+      ).trim();
+
+      if ((spouseNameRaw || spousePhoneRaw) && maritalStatus !== MaritalStatus.MARRIED) {
+        result.errors.push({
+          row: rowNumber,
+          message: 'Se indicó cónyuge pero el estado civil no es «casado»',
+          data: row,
+        });
+        continue;
+      }
+
+      // El vínculo se resuelve en una segunda pasada: el cónyuge puede aparecer
+      // más abajo en el archivo y todavía no existir cuando se lee esta fila.
+      if (spousePhoneRaw) {
+        const spousePhone = this.phone.tryNormalize(spousePhoneRaw);
+        if (!spousePhone) {
+          result.errors.push({
+            row: rowNumber,
+            message: `El teléfono del cónyuge "${spousePhoneRaw}" no es válido`,
+            data: row,
+          });
+          continue;
+        }
+        vinculos.push({ row: rowNumber, phoneE164, spousePhone, data: row });
+      } else if (spouseNameRaw) {
+        vinculos.push({ row: rowNumber, phoneE164, spouseName: spouseNameRaw, data: row });
+      }
+
       if (options.dryRun) {
         const exists = await this.prisma.participant.findFirst({
           where: { phoneE164: { in: this.phone.lookupVariants(phoneE164) } },
@@ -112,6 +167,8 @@ export class CsvImportService {
             // Un consentimiento ya registrado no se sobrescribe con la fecha de
             // una reimportación: interesa cuándo se obtuvo por primera vez.
             optInAt: hasConsent ? (existing.optInAt ?? this.time.now()) : null,
+            // Una columna vacía no borra un estado civil ya capturado a mano.
+            ...(civilRaw ? { maritalStatus } : {}),
           },
         });
         await this.prisma.locationMembership.upsert({
@@ -135,14 +192,76 @@ export class CsvImportService {
           role,
           coverageAlerts,
           optInAt: hasConsent ? this.time.now() : null,
+          maritalStatus,
           memberships: { create: { locationId: options.locationId } },
         },
       });
       result.created += 1;
     }
 
+    await this.resolveSpouseLinks(vinculos, result, options);
     await this.recordAudit('participants', result, options);
     return result;
+  }
+
+  /**
+   * Segunda pasada: vincula a los matrimonios una vez que todas las filas
+   * existen. Hacerlo aquí y no fila por fila permite que un cónyuge aparezca
+   * más abajo en el archivo que la persona que lo declara.
+   */
+  private async resolveSpouseLinks(
+    vinculos: SpouseLink[],
+    result: ImportResult,
+    options: ImportOptions,
+  ): Promise<void> {
+    if (vinculos.length === 0 || result.dryRun) return;
+
+    for (const vinculo of vinculos) {
+      const persona = await this.prisma.participant.findFirst({
+        where: { phoneE164: { in: this.phone.lookupVariants(vinculo.phoneE164) } },
+      });
+      if (!persona) continue;
+
+      try {
+        if (vinculo.spousePhone) {
+          const conyuge = await this.prisma.participant.findFirst({
+            where: { phoneE164: { in: this.phone.lookupVariants(vinculo.spousePhone) } },
+          });
+          if (!conyuge) {
+            result.errors.push({
+              row: vinculo.row,
+              message:
+                `No hay ningún participante con el teléfono del cónyuge ` +
+                `(${vinculo.spousePhone}). Inclúyelo en el archivo o anota solo su nombre`,
+              data: vinculo.data,
+            });
+            continue;
+          }
+
+          await this.participants.updateMarital({
+            participantId: persona.id,
+            maritalStatus: MaritalStatus.MARRIED,
+            spouseParticipantId: conyuge.id,
+            actorId: options.actorId ?? null,
+          });
+        } else {
+          await this.participants.updateMarital({
+            participantId: persona.id,
+            maritalStatus: MaritalStatus.MARRIED,
+            spouseName: vinculo.spouseName ?? null,
+            actorId: options.actorId ?? null,
+          });
+        }
+      } catch (error) {
+        // Un conflicto de matrimonio (alguien ya casado con un tercero) se
+        // reporta en su fila y no interrumpe el resto del archivo.
+        result.errors.push({
+          row: vinculo.row,
+          message: error instanceof Error ? error.message : 'No se pudo registrar el cónyuge',
+          data: vinculo.data,
+        });
+      }
+    }
   }
 
   /**

@@ -27,6 +27,8 @@ export const AUDIT_ACTIONS = {
   PARTICIPANT_CREATED: 'participant.created',
   PARTICIPANT_UPDATED: 'participant.updated',
   PARTICIPANT_OPTED_IN: 'participant.opted_in',
+  SPOUSE_LINKED: 'participant.spouse_linked',
+  SPOUSE_UNLINKED: 'participant.spouse_unlinked',
   THREAD_OPENED: 'thread.opened',
   THREAD_ANSWERED: 'thread.answered',
   THREAD_CLOSED: 'thread.closed',

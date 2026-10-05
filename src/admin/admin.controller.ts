@@ -22,6 +22,7 @@ import {
   CancelAssignmentDto,
   CreateParticipantDto,
   CreateWindowDto,
+  UpdateMaritalDto,
   ImportDto,
   LoginDto,
   MonthQueryDto,
@@ -90,8 +91,36 @@ export class AdminController {
         status: true,
         coverageAlerts: true,
         optInAt: true,
+        maritalStatus: true,
+        spouseName: true,
+        spouse: { select: { id: true, fullName: true } },
       },
     });
+  }
+
+  /** Estado civil y cónyuge de un participante. */
+  @Patch('participants/:participantId/marital')
+  @UseGuards(AdminAuthGuard)
+  updateMarital(
+    @Param('participantId') participantId: string,
+    @Body() dto: UpdateMaritalDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    return this.participants.updateMarital({
+      participantId,
+      maritalStatus: dto.maritalStatus,
+      spouseParticipantId: dto.spouseParticipantId,
+      spouseName: dto.spouseName,
+      actorId: admin.sub,
+      actorName: admin.name,
+    });
+  }
+
+  /** Participantes del punto que pueden figurar como cónyuge. */
+  @Get('locations/:id/participants/:participantId/spouse-candidates')
+  @UseGuards(AdminAuthGuard)
+  spouseCandidates(@Param('id') id: string, @Param('participantId') participantId: string) {
+    return this.participants.spouseCandidates(participantId, id);
   }
 
   @Post('locations/:id/participants')

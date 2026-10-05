@@ -41,3 +41,33 @@ export const ROLE_BY_NAME: Record<string, 'PARTICIPANT' | 'SUPERVISOR' | 'ADMIN'
   admin: 'ADMIN',
   administrador: 'ADMIN',
 };
+
+/** Estados civiles aceptados en el CSV, con y sin acento. */
+export const MARITAL_BY_NAME: Record<string, 'SINGLE' | 'MARRIED' | 'WIDOWED' | 'SEPARATED'> = {
+  soltero: 'SINGLE',
+  soltera: 'SINGLE',
+  casado: 'MARRIED',
+  casada: 'MARRIED',
+  viudo: 'WIDOWED',
+  viuda: 'WIDOWED',
+  separado: 'SEPARATED',
+  separada: 'SEPARATED',
+  divorciado: 'SEPARATED',
+  divorciada: 'SEPARATED',
+};
+
+/**
+ * Matrimonio pendiente de vincular.
+ * Se acumula durante la lectura del archivo y se resuelve al final, cuando ya
+ * existen todas las personas.
+ */
+export interface SpouseLink {
+  row: number;
+  /** Teléfono de quien declara el matrimonio. */
+  phoneE164: string;
+  /** Teléfono del cónyuge, si también es participante. */
+  spousePhone?: string;
+  /** Nombre del cónyuge, si no participa. */
+  spouseName?: string;
+  data: Record<string, string>;
+}

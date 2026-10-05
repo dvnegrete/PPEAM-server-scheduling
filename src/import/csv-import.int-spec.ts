@@ -148,6 +148,166 @@ describe('Importación desde CSV (integración)', () => {
     });
   });
 
+  describe('estado civil y cónyuge', () => {
+    it('importa el estado civil escrito en español, con o sin género', async () => {
+      const csv = [
+        'nombre,telefono,estado_civil',
+        'Ana López,5512345678,casada',
+        'Beto Ruiz,5512345679,soltero',
+        'Carla Díaz,5512345670,viuda',
+        'Dora Sosa,5512345671,separada',
+        'Elsa Vega,5512345672,',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(0);
+      const estados = await ctx.prisma.participant.findMany({
+        select: { fullName: true, maritalStatus: true },
+        orderBy: { fullName: 'asc' },
+      });
+      expect(estados).toEqual([
+        { fullName: 'Ana López', maritalStatus: 'MARRIED' },
+        { fullName: 'Beto Ruiz', maritalStatus: 'SINGLE' },
+        { fullName: 'Carla Díaz', maritalStatus: 'WIDOWED' },
+        { fullName: 'Dora Sosa', maritalStatus: 'SEPARATED' },
+        // Columna vacía: queda sin registrar, no como soltera.
+        { fullName: 'Elsa Vega', maritalStatus: 'UNKNOWN' },
+      ]);
+    });
+
+    it('rechaza un estado civil que no reconoce', async () => {
+      const result = await importer.importParticipants(
+        'nombre,telefono,estado_civil\nAna López,5512345678,comprometida',
+        { locationId },
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.errors[0].message).toContain('Estado civil desconocido');
+    });
+
+    it('vincula a dos participantes casados entre sí', async () => {
+      const csv = [
+        'nombre,telefono,estado_civil,conyuge_telefono',
+        'Ana López,5512345678,casada,5512345679',
+        'Beto Ruiz,5512345679,casado,5512345678',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(0);
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        where: { fullName: 'Ana López' },
+      });
+      const beto = await ctx.prisma.participant.findFirstOrThrow({
+        where: { fullName: 'Beto Ruiz' },
+      });
+      expect(ana.spouseId).toBe(beto.id);
+      expect(beto.spouseId).toBe(ana.id);
+    });
+
+    it('vincula aunque el cónyuge aparezca más abajo en el archivo', async () => {
+      // Ana declara a Beto en la primera fila, cuando Beto todavía no existe.
+      const csv = [
+        'nombre,telefono,estado_civil,conyuge_telefono',
+        'Ana López,5512345678,casada,5512345679',
+        'Beto Ruiz,5512345679,casado,',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(0);
+      const ana = await ctx.prisma.participant.findFirstOrThrow({
+        where: { fullName: 'Ana López' },
+      });
+      const beto = await ctx.prisma.participant.findFirstOrThrow({
+        where: { fullName: 'Beto Ruiz' },
+      });
+      expect(ana.spouseId).toBe(beto.id);
+      expect(beto.spouseId).toBe(ana.id);
+    });
+
+    it('anota solo el nombre cuando el cónyuge no participa', async () => {
+      const result = await importer.importParticipants(
+        'nombre,telefono,estado_civil,conyuge\nAna López,5512345678,casada,Julio Hernández',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.spouseName).toBe('Julio Hernández');
+      expect(ana.spouseId).toBeNull();
+      // No se da de alta a nadie por el cónyuge que no participa.
+      expect(await ctx.prisma.participant.count()).toBe(1);
+    });
+
+    it('avisa cuando el teléfono del cónyuge no está en el padrón', async () => {
+      const result = await importer.importParticipants(
+        'nombre,telefono,estado_civil,conyuge_telefono\nAna López,5512345678,casada,5599998888',
+        { locationId },
+      );
+
+      expect(result.created).toBe(1);
+      expect(result.errors[0].message).toContain('Inclúyelo en el archivo o anota solo su nombre');
+    });
+
+    it('rechaza indicar cónyuge si el estado civil no es casado', async () => {
+      const result = await importer.importParticipants(
+        'nombre,telefono,estado_civil,conyuge\nAna López,5512345678,soltera,Julio Hernández',
+        { locationId },
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.errors[0].message).toContain('el estado civil no es «casado»');
+    });
+
+    it('reporta el conflicto en su fila y sigue con el resto del archivo', async () => {
+      const csv = [
+        'nombre,telefono,estado_civil,conyuge_telefono',
+        'Ana López,5512345678,casada,5512345679',
+        'Beto Ruiz,5512345679,casado,5512345678',
+        // Carla declara a Beto, que ya quedó casado con Ana.
+        'Carla Díaz,5512345670,casada,5512345679',
+        'Dora Sosa,5512345671,soltera,',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.created).toBe(4);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].row).toBe(4);
+      expect(result.errors[0].message).toContain('ya figura casado');
+      // Dora, en la fila siguiente, se importó sin problema.
+      const dora = await ctx.prisma.participant.findFirstOrThrow({
+        where: { fullName: 'Dora Sosa' },
+      });
+      expect(dora.maritalStatus).toBe('SINGLE');
+    });
+
+    it('una reimportación sin la columna no borra el estado ya capturado', async () => {
+      await importer.importParticipants(
+        'nombre,telefono,estado_civil\nAna López,5512345678,casada',
+        { locationId },
+      );
+      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.maritalStatus).toBe('MARRIED');
+    });
+
+    it('el modo de prueba no crea vínculos', async () => {
+      const csv = [
+        'nombre,telefono,estado_civil,conyuge_telefono',
+        'Ana López,5512345678,casada,5512345679',
+        'Beto Ruiz,5512345679,casado,5512345678',
+      ].join('\n');
+
+      await importer.importParticipants(csv, { locationId, dryRun: true });
+
+      expect(await ctx.prisma.participant.count()).toBe(0);
+    });
+  });
+
   describe('asignaciones fijas', () => {
     it('asigna titulares a su turno habitual', async () => {
       await plantillaLunes();

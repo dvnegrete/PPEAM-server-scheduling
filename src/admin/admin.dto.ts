@@ -93,6 +93,23 @@ export class AssignParticipantDto {
   participantId!: string;
 }
 
+export class UpdateMaritalDto {
+  @IsIn(['UNKNOWN', 'SINGLE', 'MARRIED', 'WIDOWED', 'SEPARATED'], {
+    message: 'Estado civil no válido',
+  })
+  maritalStatus!: 'UNKNOWN' | 'SINGLE' | 'MARRIED' | 'WIDOWED' | 'SEPARATED';
+
+  /** Cónyuge que también es participante. Excluyente con `spouseName`. */
+  @IsOptional()
+  @IsString()
+  spouseParticipantId?: string | null;
+
+  /** Nombre del cónyuge que no participa. Excluyente con `spouseParticipantId`. */
+  @IsOptional()
+  @IsString()
+  spouseName?: string | null;
+}
+
 export class CreateWindowDto {
   @Type(() => Number)
   @IsInt()
