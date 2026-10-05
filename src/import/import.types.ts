@@ -42,6 +42,64 @@ export const ROLE_BY_NAME: Record<string, 'PARTICIPANT' | 'SUPERVISOR' | 'ADMIN'
   administrador: 'ADMIN',
 };
 
+/**
+ * Columnas que entiende la importación del padrón, incluidas las variantes con
+ * acento y en inglés. Sirven para avisar de un encabezado irreconocible antes de
+ * procesar fila por fila.
+ */
+export const PARTICIPANT_COLUMNS = [
+  'nombre',
+  'name',
+  'apellido_paterno',
+  'apellido paterno',
+  'paternal_surname',
+  'apellido_materno',
+  'apellido materno',
+  'maternal_surname',
+  'nombre_a_mostrar',
+  'nombre a mostrar',
+  'display_name',
+  'telefono',
+  'teléfono',
+  'phone',
+  'rol',
+  'role',
+  'congregacion',
+  'congregación',
+  'congregation',
+  'circuito',
+  'circuit',
+  'ciudad',
+  'city',
+  'estado_civil',
+  'estado civil',
+  'conyuge',
+  'cónyuge',
+  'spouse',
+  'conyuge_telefono',
+  'cónyuge_teléfono',
+  'spouse_phone',
+  'alertas',
+  'alerts',
+  'consentimiento',
+  'consent',
+] as const;
+
+/** Columnas que entiende la importación de asignaciones fijas. */
+export const ASSIGNMENT_COLUMNS = [
+  'telefono',
+  'teléfono',
+  'phone',
+  'dia',
+  'día',
+  'day',
+  'inicio',
+  'hora',
+  'start',
+  'semana',
+  'week',
+] as const;
+
 /** Estados civiles aceptados en el CSV, con sus variantes de género. */
 export const MARITAL_BY_NAME: Record<string, 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO'> = {
   soltero: 'SOLTERO',

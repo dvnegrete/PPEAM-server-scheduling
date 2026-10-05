@@ -37,6 +37,100 @@ describe('Importación desde CSV (integración)', () => {
     });
   }
 
+  describe('formato del archivo', () => {
+    it('acepta punto y coma, que es lo que genera Excel en español', async () => {
+      const result = await importer.importParticipants(
+        'nombre;apellido_paterno;telefono\nAna;López;5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.created).toBe(1);
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.firstName).toBe('Ana');
+      expect(ana.paternalSurname).toBe('López');
+    });
+
+    it('acepta tabuladores', async () => {
+      const result = await importer.importParticipants(
+        'nombre\tapellido_paterno\ttelefono\nAna\tLópez\t5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.created).toBe(1);
+    });
+
+    it('acepta la marca de bytes que agregan Excel y Google Sheets', async () => {
+      const result = await importer.importParticipants(
+        '\uFEFFnombre,apellido_paterno,telefono\nAna,López,5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.created).toBe(1);
+    });
+
+    it('acepta saltos de línea de Windows y encabezados con mayúsculas', async () => {
+      const result = await importer.importParticipants(
+        'Nombre, Apellido_Paterno , TELEFONO\r\nAna,López,5512345678\r\n',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.created).toBe(1);
+    });
+
+    it('no confunde un punto y coma dentro de un valor entrecomillado', async () => {
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\nAna,"López;Pérez",5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.paternalSurname).toBe('López;Pérez');
+    });
+
+    it('avisa de un encabezado irreconocible en vez de culpar a cada fila', async () => {
+      // Antes, un encabezado que no se podía leer hacía que todas las filas
+      // reportaran «Falta el nombre», sin pista de la causa real.
+      const result = await importer.importParticipants(
+        'persona|apellido|movil\nAna|López|5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].row).toBe(1);
+      expect(result.errors[0].message).toContain('No se reconoció ninguna columna');
+      expect(result.errors[0].message).toContain('punto y coma o tabuladores');
+    });
+
+    it('avisa cuando el archivo solo trae el encabezado', async () => {
+      const result = await importer.importParticipants('nombre,apellido_paterno,telefono', {
+        locationId,
+      });
+
+      expect(result.errors[0].message).toContain('solo el encabezado');
+      expect(result.created).toBe(0);
+    });
+
+    it('las asignaciones fijas también aceptan punto y coma', async () => {
+      await plantillaLunes();
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono;dia;inicio\n5512345678;lunes;7:00',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.created).toBe(1);
+    });
+  });
+
   describe('padrón de participantes', () => {
     it('importa nombres y teléfonos en distintos formatos', async () => {
       const csv = [

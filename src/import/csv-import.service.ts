@@ -9,9 +9,11 @@ import { OrganizationFieldsService } from '../participants/organization-fields.s
 import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
+  ASSIGNMENT_COLUMNS,
   emptyResult,
   ImportResult,
   MARITAL_BY_NAME,
+  PARTICIPANT_COLUMNS,
   ROLE_BY_NAME,
   SpouseLink,
   WEEKDAY_BY_NAME,
@@ -46,7 +48,11 @@ export class CsvImportService {
 
   /**
    * Padrón de participantes.
-   * Columnas: `nombre`, `telefono`, y opcionalmente `rol`, `alertas` y `consentimiento`.
+   *
+   * Obligatorias: `nombre`, `apellido_paterno`, `telefono`. Opcionales:
+   * `apellido_materno`, `nombre_a_mostrar`, `rol`, `congregacion`, `circuito`,
+   * `ciudad`, `estado_civil`, `conyuge`, `conyuge_telefono`, `alertas` y
+   * `consentimiento`.
    *
    * Sobre el consentimiento: la política de Meta exige poder demostrar que la
    * persona aceptó recibir mensajes, no que haya escrito primero por WhatsApp.
@@ -57,13 +63,12 @@ export class CsvImportService {
    */
   async importParticipants(csv: string, options: ImportOptions): Promise<ImportResult> {
     const result = emptyResult(options.dryRun ?? false);
-    const rows = this.parseCsv(csv, result);
+    const rows = this.parseCsv(csv, result, PARTICIPANT_COLUMNS);
     const vinculos: SpouseLink[] = [];
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
       result.processed += 1;
-
       const firstName = (row.nombre ?? row.name ?? '').trim();
       const paternalSurname = (
         row.apellido_paterno ??
@@ -320,7 +325,7 @@ export class CsvImportService {
    */
   async importRecurringAssignments(csv: string, options: ImportOptions): Promise<ImportResult> {
     const result = emptyResult(options.dryRun ?? false);
-    const rows = this.parseCsv(csv, result);
+    const rows = this.parseCsv(csv, result, ASSIGNMENT_COLUMNS);
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
@@ -451,22 +456,66 @@ export class CsvImportService {
     return result;
   }
 
-  private parseCsv(csv: string, result: ImportResult): Array<Record<string, string>> {
+  /**
+   * Lee el archivo y normaliza los nombres de columna.
+   *
+   * El separador se detecta entre coma, punto y coma y tabulador: Excel en
+   * español guarda los CSV con punto y coma, y al suponer solo la coma el
+   * encabezado completo se convertía en una única columna. El resultado era que
+   * todas las filas fallaban con «Falta el nombre», sin pista de la causa real.
+   *
+   * `columnas` son los nombres que ese importador entiende; si el encabezado no
+   * trae ninguno, se reporta de una vez en lugar de dejar que cada fila se queje
+   * por separado de un campo que en realidad nunca se leyó.
+   */
+  private parseCsv(
+    csv: string,
+    result: ImportResult,
+    columnas: readonly string[],
+  ): Array<Record<string, string>> {
+    let rows: Array<Record<string, string>>;
+
     try {
-      return parse(csv, {
-        columns: (header: string[]) =>
-          header.map((column) => column.trim().toLowerCase().replace(/^/, '')),
+      rows = parse(csv, {
+        columns: (header: string[]) => header.map((column) => column.trim().toLowerCase()),
+        delimiter: [',', ';', '\t'],
         skip_empty_lines: true,
         trim: true,
         bom: true,
+        relaxColumnCount: true,
       }) as Array<Record<string, string>>;
     } catch (error) {
       result.errors.push({
         row: 1,
-        message: `No se pudo leer el archivo CSV: ${String(error)}`,
+        message: `No se pudo leer el archivo: ${error instanceof Error ? error.message : String(error)}`,
       });
       return [];
     }
+
+    if (rows.length === 0) {
+      result.errors.push({
+        row: 1,
+        message: 'El archivo no tiene filas de datos, solo el encabezado',
+      });
+      return [];
+    }
+
+    const encabezado = Object.keys(rows[0]);
+    const reconocidas = encabezado.filter((columna) => columnas.includes(columna));
+
+    if (reconocidas.length === 0) {
+      result.errors.push({
+        row: 1,
+        message:
+          `No se reconoció ninguna columna. Se encontró: ${encabezado.map((c) => `«${c}»`).join(', ')}. ` +
+          `Se esperaba al menos una de: ${columnas.join(', ')}. ` +
+          'Revisa que la primera fila sea el encabezado y que el archivo esté separado por comas, ' +
+          'punto y coma o tabuladores.',
+      });
+      return [];
+    }
+
+    return rows;
   }
 
   /** Acepta "7:00", "7", "07:30". */
