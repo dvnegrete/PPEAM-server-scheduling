@@ -1,6 +1,7 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcryptjs';
+import { fullName } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -36,8 +37,11 @@ export class AdminAuthService {
       data: { lastLoginAt: this.time.now() },
     });
 
-    const payload: AdminTokenPayload = { sub: user.id, email: user.email, name: user.name };
-    return { token: await this.jwt.signAsync(payload), name: user.name };
+    // El nombre viaja en el token porque se usa para sellar quién capturó cada
+    // cancelación y cada cobertura, y se muestra tal cual en el tablero.
+    const nombre = fullName(user);
+    const payload: AdminTokenPayload = { sub: user.id, email: user.email, name: nombre };
+    return { token: await this.jwt.signAsync(payload), name: nombre };
   }
 
   async verify(token: string): Promise<AdminTokenPayload> {

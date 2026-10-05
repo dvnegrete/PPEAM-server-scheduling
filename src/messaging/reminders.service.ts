@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { AssignmentStatus, Location, ShiftStatus } from '@prisma/client';
 import { LocationSettings } from '../common/settings/location-settings';
+import { greetingName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { TimeService } from '../common/time/time.service';
 import { AppConfigService } from '../config/app-config.service';
@@ -122,10 +123,10 @@ export class RemindersService {
 
       const delivered = await this.notifications.sendToParticipant(assignment.participant, {
         interactive: (to) =>
-          this.composer.reminder(to, assignment.participant.fullName, label, assignment.id),
+          this.composer.reminder(to, greetingName(assignment.participant), label, assignment.id),
         template: {
           name: WA_TEMPLATES.RECORDATORIO_TURNO,
-          params: [assignment.participant.fullName, label],
+          params: [greetingName(assignment.participant), label],
           buttonPayloads: [`CONFIRMO:${assignment.id}`, `NO_PODRE:${assignment.id}`],
         },
         // Aunque el cron corra varias veces, el recordatorio sale una sola vez.

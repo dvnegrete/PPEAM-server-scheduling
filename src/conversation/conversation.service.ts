@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { Participant } from '@prisma/client';
+import { greetingName } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { MessageComposer } from '../messaging/message-composer';
 import { ParticipantsService } from '../participants/participants.service';
@@ -181,7 +182,7 @@ export class ConversationService {
     const isSupervisor = await this.supervisors.isSupervisor(participant.id);
     await this.reply(
       participant.id,
-      this.composer.mainMenu(participant.phoneE164, participant.fullName, isSupervisor),
+      this.composer.mainMenu(participant.phoneE164, greetingName(participant), isSupervisor),
     );
   }
 

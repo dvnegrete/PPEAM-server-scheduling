@@ -5,12 +5,14 @@ import {
   CoverageRequestStatus,
   ShiftStatus,
 } from '@prisma/client';
+import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OCCUPYING_STATUSES } from '../scheduling/shifts.service';
 
 export interface AttendanceRow {
   participantId: string;
+  /** Nombre formal, como se lee en un padrón: «López Pérez, Ana María». */
   fullName: string;
   /** Turnos que efectivamente atendió (ya ocurrieron y no los canceló). */
   served: number;
@@ -158,7 +160,7 @@ export class ReportsService {
   async attendance(locationId: string, from: Date, to: Date): Promise<AttendanceRow[]> {
     const participants = await this.prisma.participant.findMany({
       where: { memberships: { some: { locationId, active: true } } },
-      orderBy: { fullName: 'asc' },
+      orderBy: [...PADRON_ORDER],
     });
 
     const assignments = await this.prisma.assignment.findMany({
@@ -174,7 +176,7 @@ export class ReportsService {
     for (const participant of participants) {
       byParticipant.set(participant.id, {
         participantId: participant.id,
-        fullName: participant.fullName,
+        fullName: formalName(participant),
         served: 0,
         cancelled: 0,
         covered: 0,
@@ -299,7 +301,17 @@ export class ReportsService {
       include: {
         assignments: {
           where: { status: { in: OCCUPYING_STATUSES } },
-          include: { participant: { select: { id: true, fullName: true } } },
+          include: {
+            participant: {
+              select: {
+                id: true,
+                firstName: true,
+                paternalSurname: true,
+                maternalSurname: true,
+                displayName: true,
+              },
+            },
+          },
         },
       },
       orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
@@ -315,7 +327,7 @@ export class ReportsService {
       weekOfMonth: shift.weekOfMonth,
       participants: shift.assignments.map((assignment) => ({
         id: assignment.participant.id,
-        name: assignment.participant.fullName,
+        name: displayName(assignment.participant),
         origin: assignment.origin,
         confirmed: assignment.status === AssignmentStatus.CONFIRMED,
       })),
@@ -334,7 +346,17 @@ export class ReportsService {
       where: { locationId, startsAt: { gte: from, lte: to } },
       include: {
         assignments: {
-          include: { participant: { select: { id: true, fullName: true } } },
+          include: {
+            participant: {
+              select: {
+                id: true,
+                firstName: true,
+                paternalSurname: true,
+                maternalSurname: true,
+                displayName: true,
+              },
+            },
+          },
           orderBy: { createdAt: 'asc' },
         },
       },
@@ -387,7 +409,7 @@ export class ReportsService {
         participants: ocupantes.map((assignment) => ({
           assignmentId: assignment.id,
           participantId: assignment.participant.id,
-          name: assignment.participant.fullName,
+          name: displayName(assignment.participant),
           origin: assignment.origin,
           confirmed: assignment.status === AssignmentStatus.CONFIRMED,
           assignedAt: assignment.assignedAt?.toISOString() ?? null,
@@ -395,7 +417,7 @@ export class ReportsService {
         })),
         cancellations: bajas.map((assignment) => ({
           participantId: assignment.participant.id,
-          name: assignment.participant.fullName,
+          name: displayName(assignment.participant),
           cancelledAt: assignment.cancelledAt?.toISOString() ?? null,
           reason: assignment.cancelReason,
           reasonCode: assignment.cancelReasonCode,

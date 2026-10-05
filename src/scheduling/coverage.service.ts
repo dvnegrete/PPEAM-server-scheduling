@@ -10,6 +10,7 @@ import {
   ShiftStatus,
 } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName, fullName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { TimeService } from '../common/time/time.service';
 import { DomainEventBus } from '../events/domain-event-bus';
@@ -157,7 +158,7 @@ export class CoverageService {
     await this.audit.record({
       actorType: ActorType.PARTICIPANT,
       actorId: participantId,
-      actorName: participant.fullName,
+      actorName: fullName(participant),
       action: AUDIT_ACTIONS.COVERAGE_OFFERED,
       entity: 'CoverageOffer',
       entityId: offer.id,
@@ -170,7 +171,7 @@ export class CoverageService {
       offerId: offer.id,
       shiftId: request.shiftId,
       participantId,
-      participantName: participant.fullName,
+      participantName: displayName(participant),
       shiftLabel,
       urgent: request.urgent,
     };
@@ -316,11 +317,11 @@ export class CoverageService {
       offerId,
       shiftId: outcome.shift.id,
       participantId: outcome.offer.participantId,
-      participantName: outcome.offer.participant.fullName,
+      participantName: displayName(outcome.offer.participant),
       shiftLabel,
       urgent: outcome.request.urgent,
       decidedById,
-      decidedByName: decider?.fullName ?? null,
+      decidedByName: decider ? displayName(decider) : null,
       automatic,
     };
     await this.events.publish(DOMAIN_EVENTS.COVERAGE_OFFER_APPROVED, decision);
@@ -337,7 +338,7 @@ export class CoverageService {
     }
 
     this.logger.log(
-      `${outcome.offer.participant.fullName} cubre ${shiftLabel}` +
+      `${displayName(outcome.offer.participant)} cubre ${shiftLabel}` +
         (automatic ? ' (aprobación automática por vencimiento del plazo)' : ''),
     );
   }
@@ -377,7 +378,7 @@ export class CoverageService {
       offerId,
       shiftId: offer.coverageRequest.shiftId,
       participantId: offer.participantId,
-      participantName: offer.participant.fullName,
+      participantName: displayName(offer.participant),
       shiftLabel: this.shifts.label(
         offer.coverageRequest.shift,
         offer.coverageRequest.shift.location.timezone,

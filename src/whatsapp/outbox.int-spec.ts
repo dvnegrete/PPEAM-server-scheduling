@@ -154,7 +154,12 @@ describe('Webhook entrante (integración)', () => {
   it('reconoce al participante aunque WhatsApp mande el formato con "1"', async () => {
     const location = await createLocation(ctx.prisma);
     const ana = await ctx.prisma.participant.create({
-      data: { fullName: 'Ana', phoneE164: '+525512349999', optInAt: NOW },
+      data: {
+        firstName: 'Ana',
+        paternalSurname: 'Prueba',
+        phoneE164: '+525512349999',
+        optInAt: NOW,
+      },
     });
     await ctx.prisma.locationMembership.create({
       data: { locationId: location.id, participantId: ana.id },

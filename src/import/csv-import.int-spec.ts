@@ -40,10 +40,10 @@ describe('Importación desde CSV (integración)', () => {
   describe('padrón de participantes', () => {
     it('importa nombres y teléfonos en distintos formatos', async () => {
       const csv = [
-        'nombre,telefono,rol',
-        'Ana López,5512345678,participante',
-        'Beto Ruiz,+52 55 8765 4321,participante',
-        'Elena Mora,5215599887766,encargado',
+        'nombre,apellido_paterno,apellido_materno,telefono,rol',
+        'Ana,López,Pérez,5512345678,participante',
+        'Beto,Ruiz,,+52 55 8765 4321,participante',
+        'Elena,Mora,Solís,5215599887766,encargado',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
@@ -52,20 +52,116 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors).toHaveLength(0);
 
       const elena = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Elena Mora' },
+        where: { firstName: 'Elena' },
       });
       expect(elena.role).toBe('SUPERVISOR');
       // El "1" que agrega WhatsApp a los móviles mexicanos se normaliza.
       expect(elena.phoneE164).toBe('+525599887766');
     });
 
+    it('acepta a quien usa un solo apellido', async () => {
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,apellido_materno,telefono\nJohn,Smith,,5512345678',
+        { locationId },
+      );
+
+      expect(result.errors).toHaveLength(0);
+      const john = await ctx.prisma.participant.findFirstOrThrow();
+      expect(john.paternalSurname).toBe('Smith');
+      expect(john.maternalSurname).toBeNull();
+    });
+
+    it('guarda el nombre a mostrar cuando viene en el archivo', async () => {
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,nombre_a_mostrar\nAna María,López,5512345678,Anita',
+        { locationId },
+      );
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.firstName).toBe('Ana María');
+      expect(ana.displayName).toBe('Anita');
+    });
+
+    it('rechaza el formato anterior en vez de meter el apellido dentro del nombre', async () => {
+      // Un archivo viejo traía «Ana López» en la columna `nombre`. Aceptarlo
+      // callando guardaría el apellido como parte del nombre y nadie lo notaría
+      // hasta ver un saludo equivocado.
+      const result = await importer.importParticipants('nombre,telefono\nAna López,5512345678', {
+        locationId,
+      });
+
+      expect(result.created).toBe(0);
+      expect(result.errors[0].message).toContain('Falta el apellido paterno');
+      expect(result.errors[0].message).toContain('tres columnas');
+    });
+
+    it('ordena el padrón por apellido paterno', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono',
+        'Ana,Zúñiga,5512345678',
+        'Beto,Álvarez,5512345679',
+        'Carla,Morales,5512345670',
+      ].join('\n');
+      await importer.importParticipants(csv, { locationId });
+
+      const padron = await ctx.prisma.participant.findMany({
+        orderBy: [{ paternalSurname: 'asc' }, { maternalSurname: 'asc' }, { firstName: 'asc' }],
+        select: { paternalSurname: true },
+      });
+      expect(padron.map((p) => p.paternalSurname)).toEqual(['Morales', 'Zúñiga', 'Álvarez']);
+    });
+
+    it('importa congregación, circuito y ciudad', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono,congregacion,circuito,ciudad',
+        'Ana,López,5512345678,Centro,Monterrey 14,Monterrey',
+        'Beto,Ruiz,5512345679,Valle,Monterrey 14,Monterrey',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(0);
+      const ana = await ctx.prisma.participant.findFirstOrThrow({ where: { firstName: 'Ana' } });
+      expect(ana.congregation).toBe('Centro');
+      expect(ana.circuit).toBe('Monterrey 14');
+      expect(ana.city).toBe('Monterrey');
+    });
+
+    it('alinea las grafías equivalentes dentro del mismo archivo', async () => {
+      const csv = [
+        'nombre,apellido_paterno,telefono,ciudad',
+        'Ana,López,5512345678,Querétaro',
+        'Beto,Ruiz,5512345679,queretaro',
+        'Carla,Díaz,5512345670,QUERÉTARO',
+      ].join('\n');
+
+      await importer.importParticipants(csv, { locationId });
+
+      const ciudades = await ctx.prisma.participant.findMany({ select: { city: true } });
+      // Una sola grafía: el filtro por ciudad no se parte en tres.
+      expect(new Set(ciudades.map((p) => p.city))).toEqual(new Set(['Querétaro']));
+    });
+
+    it('una reimportación sin esas columnas no borra lo ya capturado', async () => {
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,congregacion\nAna,López,5512345678,Centro',
+        { locationId },
+      );
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const ana = await ctx.prisma.participant.findFirstOrThrow();
+      expect(ana.congregation).toBe('Centro');
+    });
+
     it('reporta todos los errores juntos, sin detenerse en el primero', async () => {
       const csv = [
-        'nombre,telefono',
-        ',5512345678',
-        'Beto Ruiz,',
-        'Carla Díaz,123',
-        'Dora Sosa,5512345679',
+        'nombre,apellido_paterno,telefono',
+        ',López,5512345678',
+        'Beto,Ruiz,',
+        'Carla,Díaz,123',
+        'Dora,Sosa,5512345679',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
@@ -80,7 +176,7 @@ describe('Importación desde CSV (integración)', () => {
     });
 
     it('el modo de prueba no escribe nada', async () => {
-      const csv = 'nombre,telefono\nAna López,5512345678';
+      const csv = 'nombre,apellido_paterno,telefono\nAna,López,5512345678';
 
       const result = await importer.importParticipants(csv, { locationId, dryRun: true });
 
@@ -93,18 +189,18 @@ describe('Importación desde CSV (integración)', () => {
       await createParticipant(ctx.prisma, locationId, 'Ana Vieja');
       const ana = await ctx.prisma.participant.findFirstOrThrow();
 
-      const csv = `nombre,telefono\nAna Nueva,${ana.phoneE164}`;
+      const csv = `nombre,apellido_paterno,telefono\nAna,Nueva,${ana.phoneE164}`;
       const result = await importer.importParticipants(csv, { locationId });
 
       expect(result.created).toBe(0);
       expect(result.updated).toBe(1);
       expect(await ctx.prisma.participant.count()).toBe(1);
       const actualizada = await ctx.prisma.participant.findFirstOrThrow();
-      expect(actualizada.fullName).toBe('Ana Nueva');
+      expect(actualizada.paternalSurname).toBe('Nueva');
     });
 
     it('rechaza un rol desconocido en vez de asumir uno', async () => {
-      const csv = 'nombre,telefono,rol\nAna López,5512345678,jefe';
+      const csv = 'nombre,apellido_paterno,telefono,rol\nAna,López,5512345678,jefe';
       const result = await importer.importParticipants(csv, { locationId });
 
       expect(result.created).toBe(0);
@@ -114,33 +210,42 @@ describe('Importación desde CSV (integración)', () => {
     it('registra el consentimiento declarado al importar el padrón', async () => {
       // Sin este registro no se les podría avisar de ninguna vacante: para
       // escribirles tendrían que haber escrito antes.
-      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
 
       const ana = await ctx.prisma.participant.findFirstOrThrow();
       expect(ana.optInAt).not.toBeNull();
     });
 
     it('respeta a quien no dio consentimiento', async () => {
-      await importer.importParticipants('nombre,telefono,consentimiento\nAna López,5512345678,no', {
-        locationId,
-      });
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,consentimiento\nAna,López,5512345678,no',
+        {
+          locationId,
+        },
+      );
 
       const ana = await ctx.prisma.participant.findFirstOrThrow();
       expect(ana.optInAt).toBeNull();
     });
 
     it('conserva la fecha original del consentimiento al reimportar', async () => {
-      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
       const primera = await ctx.prisma.participant.findFirstOrThrow();
 
-      await importer.importParticipants('nombre,telefono\nAna L.,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,L.,5512345678', {
+        locationId,
+      });
       const segunda = await ctx.prisma.participant.findFirstOrThrow();
 
       expect(segunda.optInAt?.getTime()).toBe(primera.optInAt?.getTime());
     });
 
     it('respeta la preferencia de avisos de vacantes', async () => {
-      const csv = 'nombre,telefono,alertas\nAna López,5512345678,no';
+      const csv = 'nombre,apellido_paterno,telefono,alertas\nAna,López,5512345678,no';
       await importer.importParticipants(csv, { locationId });
 
       const ana = await ctx.prisma.participant.findFirstOrThrow();
@@ -151,34 +256,34 @@ describe('Importación desde CSV (integración)', () => {
   describe('estado civil y cónyuge', () => {
     it('importa el estado civil escrito en español, con o sin género', async () => {
       const csv = [
-        'nombre,telefono,estado_civil',
-        'Ana López,5512345678,casada',
-        'Beto Ruiz,5512345679,soltero',
-        'Carla Díaz,5512345670,viuda',
-        'Dora Sosa,5512345671,separada',
-        'Elsa Vega,5512345672,',
+        'nombre,apellido_paterno,telefono,estado_civil',
+        'Ana,López,5512345678,casada',
+        'Beto,Ruiz,5512345679,soltero',
+        'Carla,Díaz,5512345670,viuda',
+        'Dora,Sosa,5512345671,separada',
+        'Elsa,Vega,5512345672,',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
 
       expect(result.errors).toHaveLength(0);
       const estados = await ctx.prisma.participant.findMany({
-        select: { fullName: true, maritalStatus: true },
-        orderBy: { fullName: 'asc' },
+        select: { firstName: true, maritalStatus: true },
+        orderBy: { firstName: 'asc' },
       });
       expect(estados).toEqual([
-        { fullName: 'Ana López', maritalStatus: 'MARRIED' },
-        { fullName: 'Beto Ruiz', maritalStatus: 'SINGLE' },
-        { fullName: 'Carla Díaz', maritalStatus: 'WIDOWED' },
-        { fullName: 'Dora Sosa', maritalStatus: 'SEPARATED' },
+        { firstName: 'Ana', maritalStatus: 'CASADO' },
+        { firstName: 'Beto', maritalStatus: 'SOLTERO' },
+        { firstName: 'Carla', maritalStatus: 'VIUDO' },
+        { firstName: 'Dora', maritalStatus: 'SEPARADO' },
         // Columna vacía: queda sin registrar, no como soltera.
-        { fullName: 'Elsa Vega', maritalStatus: 'UNKNOWN' },
+        { firstName: 'Elsa', maritalStatus: 'SIN_REGISTRAR' },
       ]);
     });
 
     it('rechaza un estado civil que no reconoce', async () => {
       const result = await importer.importParticipants(
-        'nombre,telefono,estado_civil\nAna López,5512345678,comprometida',
+        'nombre,apellido_paterno,telefono,estado_civil\nAna,López,5512345678,comprometida',
         { locationId },
       );
 
@@ -188,19 +293,19 @@ describe('Importación desde CSV (integración)', () => {
 
     it('vincula a dos participantes casados entre sí', async () => {
       const csv = [
-        'nombre,telefono,estado_civil,conyuge_telefono',
-        'Ana López,5512345678,casada,5512345679',
-        'Beto Ruiz,5512345679,casado,5512345678',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono',
+        'Ana,López,5512345678,casada,5512345679',
+        'Beto,Ruiz,5512345679,casado,5512345678',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
 
       expect(result.errors).toHaveLength(0);
       const ana = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Ana López' },
+        where: { firstName: 'Ana' },
       });
       const beto = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Beto Ruiz' },
+        where: { firstName: 'Beto' },
       });
       expect(ana.spouseId).toBe(beto.id);
       expect(beto.spouseId).toBe(ana.id);
@@ -209,19 +314,19 @@ describe('Importación desde CSV (integración)', () => {
     it('vincula aunque el cónyuge aparezca más abajo en el archivo', async () => {
       // Ana declara a Beto en la primera fila, cuando Beto todavía no existe.
       const csv = [
-        'nombre,telefono,estado_civil,conyuge_telefono',
-        'Ana López,5512345678,casada,5512345679',
-        'Beto Ruiz,5512345679,casado,',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono',
+        'Ana,López,5512345678,casada,5512345679',
+        'Beto,Ruiz,5512345679,casado,',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
 
       expect(result.errors).toHaveLength(0);
       const ana = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Ana López' },
+        where: { firstName: 'Ana' },
       });
       const beto = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Beto Ruiz' },
+        where: { firstName: 'Beto' },
       });
       expect(ana.spouseId).toBe(beto.id);
       expect(beto.spouseId).toBe(ana.id);
@@ -229,7 +334,7 @@ describe('Importación desde CSV (integración)', () => {
 
     it('anota solo el nombre cuando el cónyuge no participa', async () => {
       const result = await importer.importParticipants(
-        'nombre,telefono,estado_civil,conyuge\nAna López,5512345678,casada,Julio Hernández',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge\nAna,López,5512345678,casada,Julio Hernández',
         { locationId },
       );
 
@@ -243,7 +348,7 @@ describe('Importación desde CSV (integración)', () => {
 
     it('avisa cuando el teléfono del cónyuge no está en el padrón', async () => {
       const result = await importer.importParticipants(
-        'nombre,telefono,estado_civil,conyuge_telefono\nAna López,5512345678,casada,5599998888',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono\nAna,López,5512345678,casada,5599998888',
         { locationId },
       );
 
@@ -253,7 +358,7 @@ describe('Importación desde CSV (integración)', () => {
 
     it('rechaza indicar cónyuge si el estado civil no es casado', async () => {
       const result = await importer.importParticipants(
-        'nombre,telefono,estado_civil,conyuge\nAna López,5512345678,soltera,Julio Hernández',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge\nAna,López,5512345678,soltera,Julio Hernández',
         { locationId },
       );
 
@@ -263,12 +368,12 @@ describe('Importación desde CSV (integración)', () => {
 
     it('reporta el conflicto en su fila y sigue con el resto del archivo', async () => {
       const csv = [
-        'nombre,telefono,estado_civil,conyuge_telefono',
-        'Ana López,5512345678,casada,5512345679',
-        'Beto Ruiz,5512345679,casado,5512345678',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono',
+        'Ana,López,5512345678,casada,5512345679',
+        'Beto,Ruiz,5512345679,casado,5512345678',
         // Carla declara a Beto, que ya quedó casado con Ana.
-        'Carla Díaz,5512345670,casada,5512345679',
-        'Dora Sosa,5512345671,soltera,',
+        'Carla,Díaz,5512345670,casada,5512345679',
+        'Dora,Sosa,5512345671,soltera,',
       ].join('\n');
 
       const result = await importer.importParticipants(csv, { locationId });
@@ -279,27 +384,29 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors[0].message).toContain('ya figura casado');
       // Dora, en la fila siguiente, se importó sin problema.
       const dora = await ctx.prisma.participant.findFirstOrThrow({
-        where: { fullName: 'Dora Sosa' },
+        where: { firstName: 'Dora' },
       });
-      expect(dora.maritalStatus).toBe('SINGLE');
+      expect(dora.maritalStatus).toBe('SOLTERO');
     });
 
     it('una reimportación sin la columna no borra el estado ya capturado', async () => {
       await importer.importParticipants(
-        'nombre,telefono,estado_civil\nAna López,5512345678,casada',
+        'nombre,apellido_paterno,telefono,estado_civil\nAna,López,5512345678,casada',
         { locationId },
       );
-      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
 
       const ana = await ctx.prisma.participant.findFirstOrThrow();
-      expect(ana.maritalStatus).toBe('MARRIED');
+      expect(ana.maritalStatus).toBe('CASADO');
     });
 
     it('el modo de prueba no crea vínculos', async () => {
       const csv = [
-        'nombre,telefono,estado_civil,conyuge_telefono',
-        'Ana López,5512345678,casada,5512345679',
-        'Beto Ruiz,5512345679,casado,5512345678',
+        'nombre,apellido_paterno,telefono,estado_civil,conyuge_telefono',
+        'Ana,López,5512345678,casada,5512345679',
+        'Beto,Ruiz,5512345679,casado,5512345678',
       ].join('\n');
 
       await importer.importParticipants(csv, { locationId, dryRun: true });
@@ -312,7 +419,7 @@ describe('Importación desde CSV (integración)', () => {
     it('asigna titulares a su turno habitual', async () => {
       await plantillaLunes();
       await importer.importParticipants(
-        'nombre,telefono\nAna López,5512345678\nBeto Ruiz,5512345679',
+        'nombre,apellido_paterno,telefono\nAna,López,5512345678\nBeto,Ruiz,5512345679',
         { locationId },
       );
 
@@ -336,7 +443,9 @@ describe('Importación desde CSV (integración)', () => {
           weekOfMonth: 0,
         },
       });
-      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
 
       const result = await importer.importRecurringAssignments(
         'telefono,dia,inicio\n5512345678,miercoles,9:00',
@@ -358,7 +467,9 @@ describe('Importación desde CSV (integración)', () => {
           autoFillOnly: false,
         },
       });
-      await importer.importParticipants('nombre,telefono\nAna López,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
 
       const quintoSabado = await importer.importRecurringAssignments(
         'telefono,dia,inicio,semana\n5512345678,sabado,7:00,5',
@@ -387,7 +498,7 @@ describe('Importación desde CSV (integración)', () => {
     it('impide sentar más titulares que lugares tiene el turno', async () => {
       await plantillaLunes(2);
       await importer.importParticipants(
-        'nombre,telefono\nAna,5512345678\nBeto,5512345679\nCarla,5512345670',
+        'nombre,apellido_paterno,telefono\nAna,Uno,5512345678\nBeto,Dos,5512345679\nCarla,Tres,5512345670',
         { locationId },
       );
 
@@ -408,7 +519,9 @@ describe('Importación desde CSV (integración)', () => {
 
     it('rechaza días y horas mal escritos', async () => {
       await plantillaLunes();
-      await importer.importParticipants('nombre,telefono\nAna,5512345678', { locationId });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,Prueba,5512345678', {
+        locationId,
+      });
 
       const result = await importer.importRecurringAssignments(
         ['telefono,dia,inicio', '5512345678,lunez,7:00', '5512345678,lunes,25:00'].join('\n'),

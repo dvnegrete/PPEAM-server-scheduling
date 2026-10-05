@@ -49,7 +49,21 @@ export class MonthQueryDto {
 export class CreateParticipantDto {
   @IsString()
   @IsNotEmpty({ message: 'El nombre es obligatorio' })
-  fullName!: string;
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'El apellido paterno es obligatorio' })
+  paternalSurname!: string;
+
+  /** Opcional: hay quien usa un solo apellido. */
+  @IsOptional()
+  @IsString()
+  maternalSurname?: string;
+
+  /** Cómo prefiere que se le llame. */
+  @IsOptional()
+  @IsString()
+  displayName?: string;
 
   @IsString()
   @IsNotEmpty({ message: 'El teléfono es obligatorio' })
@@ -58,6 +72,33 @@ export class CreateParticipantDto {
   @IsOptional()
   @IsString()
   role?: string;
+
+  @IsOptional()
+  @IsString()
+  congregation?: string;
+
+  @IsOptional()
+  @IsString()
+  circuit?: string;
+
+  @IsOptional()
+  @IsString()
+  city?: string;
+}
+
+/** Congregación, circuito y ciudad de una persona. */
+export class UpdateOrganizationDto {
+  @IsOptional()
+  @IsString()
+  congregation?: string | null;
+
+  @IsOptional()
+  @IsString()
+  circuit?: string | null;
+
+  @IsOptional()
+  @IsString()
+  city?: string | null;
 }
 
 export class RangeQueryDto {
@@ -94,10 +135,10 @@ export class AssignParticipantDto {
 }
 
 export class UpdateMaritalDto {
-  @IsIn(['UNKNOWN', 'SINGLE', 'MARRIED', 'WIDOWED', 'SEPARATED'], {
+  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO'], {
     message: 'Estado civil no válido',
   })
-  maritalStatus!: 'UNKNOWN' | 'SINGLE' | 'MARRIED' | 'WIDOWED' | 'SEPARATED';
+  maritalStatus!: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO';
 
   /** Cónyuge que también es participante. Excluyente con `spouseName`. */
   @IsOptional()

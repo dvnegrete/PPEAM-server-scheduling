@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { greetingName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import {
   CoverageClosedEvent,
@@ -122,10 +123,10 @@ export class NotificationListeners {
 
       await this.notifications.sendToParticipant(participant, {
         interactive: (to) =>
-          this.composer.coverageNotSelected(to, participant.fullName, event.shiftLabel),
+          this.composer.coverageNotSelected(to, greetingName(participant), event.shiftLabel),
         template: {
           name: WA_TEMPLATES.COBERTURA_AGRADECIMIENTO,
-          params: [participant.fullName, event.shiftLabel],
+          params: [greetingName(participant), event.shiftLabel],
         },
         dedupeKey: `gracias:${event.coverageRequestId}:${participantId}`,
       });

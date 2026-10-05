@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { SupervisorTask, SupervisorTaskType } from '@prisma/client';
+import { displayName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { AppConfigService } from '../config/app-config.service';
 import { CoverageService } from '../scheduling/coverage.service';
@@ -95,13 +96,13 @@ export class SupervisorTasksScheduler {
     await this.tasks.resolve(
       task.id,
       null,
-      `Aprobación automática por vencimiento del plazo: ${first.participant.fullName}`,
+      `Aprobación automática por vencimiento del plazo: ${displayName(first.participant)}`,
       { automatic: true },
     );
 
     this.logger.warn(
       `Nadie de guardia atendió la vacante ${task.coverageRequestId}; ` +
-        `se aprobó automáticamente a ${first.participant.fullName} por orden de llegada`,
+        `se aprobó automáticamente a ${displayName(first.participant)} por orden de llegada`,
     );
   }
 

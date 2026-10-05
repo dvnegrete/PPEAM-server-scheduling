@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { SupervisorTaskType } from '@prisma/client';
+import { displayName } from '../common/names/person-name';
 import {
   AssignmentCancelledEvent,
   CoverageClosedEvent,
@@ -57,7 +58,7 @@ export class SupervisorTaskListeners {
       offers: offers.map((offer) => ({
         offerId: offer.id,
         participantId: offer.participantId,
-        participantName: offer.participant.fullName,
+        participantName: displayName(offer.participant),
         offeredAt: offer.offeredAt.toISOString(),
       })),
     };

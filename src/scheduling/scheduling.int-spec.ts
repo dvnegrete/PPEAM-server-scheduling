@@ -222,8 +222,8 @@ describe('Motor de turnos (integración)', () => {
 
     it('avisa cuando el turno queda con un solo participante', async () => {
       const location = await createLocation(ctx.prisma, { minCapacity: 2 });
-      const ana = await createParticipant(ctx.prisma, location.id, 'Ana');
-      const beto = await createParticipant(ctx.prisma, location.id, 'Beto');
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
       const shift = await createShift(ctx.prisma, location.id, {
         startsAt: new Date('2026-08-30T13:00:00.000Z'),
         participantIds: [ana.id, beto.id],
@@ -241,7 +241,7 @@ describe('Motor de turnos (integración)', () => {
       expect(lowStaff.mock.calls[0][0]).toMatchObject({
         remaining: 1,
         minCapacity: 2,
-        remainingParticipantNames: ['Beto'],
+        remainingParticipantNames: ['Beto Ruiz'],
       });
       ctx.events.off(DOMAIN_EVENTS.SHIFT_LOW_STAFF, lowStaff);
     });

@@ -10,6 +10,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { displayName, PADRON_ORDER } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { CsvImportService } from '../import/csv-import.service';
 import { ParticipantsService } from '../participants/participants.service';
@@ -23,6 +24,7 @@ import {
   CreateParticipantDto,
   CreateWindowDto,
   UpdateMaritalDto,
+  UpdateOrganizationDto,
   ImportDto,
   LoginDto,
   MonthQueryDto,
@@ -33,6 +35,11 @@ import {
 import { AdminAuthService, AdminTokenPayload } from './auth.service';
 import { CurrentAdmin } from './current-admin.decorator';
 import { SupervisorsService } from '../supervisors/supervisors.service';
+import {
+  ORGANIZATION_FIELDS,
+  OrganizationField,
+  OrganizationFieldsService,
+} from '../participants/organization-fields.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { ActorType } from '@prisma/client';
@@ -51,6 +58,7 @@ export class AdminController {
     private readonly supervisors: SupervisorsService,
     private readonly assignments: AssignmentsService,
     private readonly pollDraft_: PollDraftService,
+    private readonly organization: OrganizationFieldsService,
   ) {}
 
   @Post('login')
@@ -82,18 +90,32 @@ export class AdminController {
   async participantsOf(@Param('id') id: string) {
     return this.prisma.participant.findMany({
       where: { memberships: { some: { locationId: id, active: true } } },
-      orderBy: { fullName: 'asc' },
+      orderBy: [...PADRON_ORDER],
       select: {
         id: true,
-        fullName: true,
+        firstName: true,
+        paternalSurname: true,
+        maternalSurname: true,
+        displayName: true,
         phoneE164: true,
         role: true,
         status: true,
         coverageAlerts: true,
         optInAt: true,
         maritalStatus: true,
+        congregation: true,
+        circuit: true,
+        city: true,
         spouseName: true,
-        spouse: { select: { id: true, fullName: true } },
+        spouse: {
+          select: {
+            id: true,
+            firstName: true,
+            paternalSurname: true,
+            maternalSurname: true,
+            displayName: true,
+          },
+        },
       },
     });
   }
@@ -116,6 +138,47 @@ export class AdminController {
     });
   }
 
+  /** Congregación, circuito y ciudad de un participante. */
+  @Patch('participants/:participantId/organization')
+  @UseGuards(AdminAuthGuard)
+  updateOrganization(
+    @Param('participantId') participantId: string,
+    @Body() dto: UpdateOrganizationDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    return this.participants.updateOrganization(participantId, dto, {
+      id: admin.sub,
+      name: admin.name,
+    });
+  }
+
+  /**
+   * Valores ya registrados en los tres campos, para sugerirlos al capturar y
+   * para armar los filtros del padrón.
+   */
+  @Get('locations/:id/organization-values')
+  @UseGuards(AdminAuthGuard)
+  async organizationValues(@Param('id') id: string) {
+    const entradas = await Promise.all(
+      ORGANIZATION_FIELDS.map(
+        async (campo) => [campo, await this.organization.knownValues(campo, id)] as const,
+      ),
+    );
+    return Object.fromEntries(entradas) as Record<OrganizationField, string[]>;
+  }
+
+  /** Cuánta gente hay por congregación, circuito o ciudad. */
+  @Get('locations/:id/organization-report')
+  @UseGuards(AdminAuthGuard)
+  async organizationReport(@Param('id') id: string) {
+    const entradas = await Promise.all(
+      ORGANIZATION_FIELDS.map(
+        async (campo) => [campo, await this.organization.countByField(campo, id)] as const,
+      ),
+    );
+    return Object.fromEntries(entradas);
+  }
+
   /** Participantes del punto que pueden figurar como cónyuge. */
   @Get('locations/:id/participants/:participantId/spouse-candidates')
   @UseGuards(AdminAuthGuard)
@@ -128,7 +191,13 @@ export class AdminController {
   createParticipant(@Param('id') id: string, @Body() dto: CreateParticipantDto) {
     const role = dto.role ? ROLE_BY_NAME[dto.role.toLowerCase()] : undefined;
     return this.participants.create({
-      fullName: dto.fullName,
+      firstName: dto.firstName,
+      paternalSurname: dto.paternalSurname,
+      maternalSurname: dto.maternalSurname,
+      displayName: dto.displayName,
+      congregation: dto.congregation,
+      circuit: dto.circuit,
+      city: dto.city,
       phone: dto.phone,
       locationId: id,
       role: role,
@@ -167,7 +236,7 @@ export class AdminController {
         const status = await this.supervisors.dutyStatus(supervisor.id, id);
         return {
           id: supervisor.id,
-          fullName: supervisor.fullName,
+          fullName: displayName(supervisor),
           phoneE164: supervisor.phoneE164,
           onDuty: onDuty.has(supervisor.id),
           overrideActive: status.overrideActive,
@@ -270,8 +339,15 @@ export class AdminController {
           },
         },
       },
-      select: { id: true, fullName: true, role: true },
-      orderBy: { fullName: 'asc' },
+      select: {
+        id: true,
+        firstName: true,
+        paternalSurname: true,
+        maternalSurname: true,
+        displayName: true,
+        role: true,
+      },
+      orderBy: [...PADRON_ORDER],
     });
   }
 

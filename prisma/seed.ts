@@ -63,12 +63,17 @@ async function main(): Promise<void> {
 
   const adminEmail = process.env.SEED_ADMIN_EMAIL ?? 'admin@ppeam.local';
   const adminPassword = process.env.SEED_ADMIN_PASSWORD ?? 'cambiar-esta-contrasena';
+  const adminFirstName = process.env.SEED_ADMIN_FIRST_NAME ?? 'Administrador';
+  const adminPaternal = process.env.SEED_ADMIN_PATERNAL_SURNAME ?? 'Del Sistema';
+  const adminMaternal = process.env.SEED_ADMIN_MATERNAL_SURNAME ?? null;
   await prisma.adminUser.upsert({
     where: { email: adminEmail },
     update: {},
     create: {
       email: adminEmail,
-      name: 'Administrador',
+      firstName: adminFirstName,
+      paternalSurname: adminPaternal,
+      maternalSurname: adminMaternal,
       passwordHash: await bcrypt.hash(adminPassword, 10),
     },
   });

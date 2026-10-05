@@ -73,7 +73,12 @@ describe('Modo de mensajería restringido (integración)', () => {
   it('reconoce el número aunque la lista lo traiga con el «1» que agrega WhatsApp', async () => {
     const location = await createLocation(ctx.prisma);
     const elena = await ctx.prisma.participant.create({
-      data: { fullName: 'Elena Mora', phoneE164: '+525512340001', optInAt: NOW },
+      data: {
+        firstName: 'Elena',
+        paternalSurname: 'Mora',
+        phoneE164: '+525512340001',
+        optInAt: NOW,
+      },
     });
     await ctx.prisma.locationMembership.create({
       data: { locationId: location.id, participantId: elena.id },

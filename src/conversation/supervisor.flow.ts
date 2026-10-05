@@ -8,6 +8,7 @@ import {
   SupervisorTaskType,
 } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName, fullName } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { DomainEventBus } from '../events/domain-event-bus';
 import { DOMAIN_EVENTS, ShiftCancelledEvent } from '../events/domain-events';
@@ -187,7 +188,7 @@ export class SupervisorFlow {
         payload.shiftLabel ?? 'el turno',
         offers.map((offer) => ({
           offerId: offer.id,
-          participantName: offer.participant.fullName,
+          participantName: displayName(offer.participant),
           offeredAt: offer.offeredAt,
         })),
         location.timezone,
@@ -218,14 +219,18 @@ export class SupervisorFlow {
       SupervisorTaskType.COVERAGE_APPROVAL,
     );
     if (task) {
-      await this.tasks.resolve(task.id, participant.id, `Aprobado: ${offer.participant.fullName}`);
+      await this.tasks.resolve(
+        task.id,
+        participant.id,
+        `Aprobado: ${displayName(offer.participant)}`,
+      );
     }
 
     await this.send(
       participant,
       this.composer.taskResolvedByYou(
         participant.phoneE164,
-        `Listo. ${offer.participant.fullName} queda confirmado y ya se le avisó. ` +
+        `Listo. ${displayName(offer.participant)} queda confirmado y ya se le avisó. ` +
           'A quienes no alcanzaron lugar les enviamos un agradecimiento.',
       ),
     );
@@ -258,7 +263,7 @@ export class SupervisorFlow {
     await this.audit.record({
       actorType: ActorType.SUPERVISOR,
       actorId: participant.id,
-      actorName: participant.fullName,
+      actorName: fullName(participant),
       action: AUDIT_ACTIONS.SHIFT_KEPT,
       entity: 'Shift',
       entityId: task.shiftId,
@@ -308,7 +313,7 @@ export class SupervisorFlow {
     await this.audit.record({
       actorType: ActorType.SUPERVISOR,
       actorId: participant.id,
-      actorName: participant.fullName,
+      actorName: fullName(participant),
       action: AUDIT_ACTIONS.SHIFT_CANCELLED,
       entity: 'Shift',
       entityId: shift.id,
@@ -333,7 +338,7 @@ export class SupervisorFlow {
       ),
     );
 
-    this.logger.warn(`${participant.fullName} canceló el turno ${label} por falta de personal`);
+    this.logger.warn(`${displayName(participant)} canceló el turno ${label} por falta de personal`);
   }
 
   /** Pide al encargado que escriba su respuesta a una pregunta. */
@@ -356,7 +361,7 @@ export class SupervisorFlow {
     const question = thread.messages[0]?.body ?? '';
     await this.send(
       participant,
-      this.composer.askForAnswer(participant.phoneE164, thread.participant.fullName, question),
+      this.composer.askForAnswer(participant.phoneE164, displayName(thread.participant), question),
     );
   }
 
@@ -378,7 +383,7 @@ export class SupervisorFlow {
 
     await this.send(
       supervisor,
-      this.composer.answerDelivered(supervisor.phoneE164, thread.participant.fullName),
+      this.composer.answerDelivered(supervisor.phoneE164, displayName(thread.participant)),
     );
   }
 

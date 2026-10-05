@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { ActorType, ThreadDirection, ThreadStatus } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName, fullName } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { DomainEventBus } from '../events/domain-event-bus';
 import { DOMAIN_EVENTS, QuestionAnsweredEvent, QuestionAskedEvent } from '../events/domain-events';
@@ -55,7 +56,7 @@ export class ThreadsService {
       locationId,
       threadId: thread.id,
       participantId,
-      participantName: participant.fullName,
+      participantName: displayName(participant),
       question,
     } satisfies QuestionAskedEvent);
 
@@ -91,7 +92,7 @@ export class ThreadsService {
     await this.audit.record({
       actorType: ActorType.SUPERVISOR,
       actorId: supervisorId,
-      actorName: supervisor.fullName,
+      actorName: fullName(supervisor),
       action: AUDIT_ACTIONS.THREAD_ANSWERED,
       entity: 'QuestionThread',
       entityId: threadId,
@@ -102,7 +103,7 @@ export class ThreadsService {
       threadId,
       participantId: thread.participantId,
       supervisorId,
-      supervisorName: supervisor.fullName,
+      supervisorName: displayName(supervisor),
       answer,
     } satisfies QuestionAnsweredEvent);
   }

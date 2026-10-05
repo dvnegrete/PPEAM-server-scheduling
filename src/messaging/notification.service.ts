@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Participant, ParticipantStatus, Prisma } from '@prisma/client';
+import { displayName } from '../common/names/person-name';
 import { PhoneService } from '../common/phone/phone.service';
 import { SettingsService } from '../common/settings/settings.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -79,7 +80,7 @@ export class NotificationService {
         allowed.add(participant.id);
       } else {
         this.logger.debug(
-          `Modo de prueba: se omite el aviso a ${participant.fullName} ` +
+          `Modo de prueba: se omite el aviso a ${displayName(participant)} ` +
             `(${participant.phoneE164} no está en la lista de números autorizados)`,
         );
       }
@@ -129,7 +130,7 @@ export class NotificationService {
 
     if (!spec.template) {
       this.logger.warn(
-        `Se omitió un aviso a ${participant.fullName}: la ventana de 24 h está cerrada y ` +
+        `Se omitió un aviso a ${displayName(participant)}: la ventana de 24 h está cerrada y ` +
           'la notificación no tiene plantilla asociada',
       );
       return false;

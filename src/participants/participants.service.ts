@@ -7,9 +7,11 @@ import {
   ParticipantStatus,
 } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName, fullName, PADRON_ORDER } from '../common/names/person-name';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OrganizationFieldsService } from './organization-fields.service';
 
 @Injectable()
 export class ParticipantsService {
@@ -18,6 +20,7 @@ export class ParticipantsService {
     private readonly phone: PhoneService,
     private readonly time: TimeService,
     private readonly audit: AuditService,
+    private readonly organization: OrganizationFieldsService,
   ) {}
 
   /** Busca por teléfono aceptando las variantes del formato mexicano. */
@@ -44,7 +47,13 @@ export class ParticipantsService {
 
   /** Alta desde el panel o desde WhatsApp por un encargado. */
   async create(params: {
-    fullName: string;
+    firstName: string;
+    paternalSurname: string;
+    maternalSurname?: string | null;
+    displayName?: string | null;
+    congregation?: string | null;
+    circuit?: string | null;
+    city?: string | null;
     phone: string;
     locationId: string;
     role?: ParticipantRole;
@@ -69,7 +78,11 @@ export class ParticipantsService {
 
     const participant = await this.prisma.participant.create({
       data: {
-        fullName: params.fullName.trim(),
+        firstName: params.firstName.trim(),
+        paternalSurname: params.paternalSurname.trim(),
+        maternalSurname: params.maternalSurname?.trim() || null,
+        displayName: params.displayName?.trim() || null,
+        ...(await this.organization.canonicalAll(params)),
         phoneE164,
         role: params.role ?? ParticipantRole.PARTICIPANT,
         memberships: { create: { locationId: params.locationId } },
@@ -82,7 +95,7 @@ export class ParticipantsService {
       action: AUDIT_ACTIONS.PARTICIPANT_CREATED,
       entity: 'Participant',
       entityId: participant.id,
-      after: { fullName: participant.fullName, phoneE164 },
+      after: { nombre: fullName(participant), phoneE164 },
     });
 
     return participant;
@@ -120,6 +133,44 @@ export class ParticipantsService {
       where: { id: participantId },
       data: { coverageAlerts: enabled },
     });
+  }
+
+  /**
+   * Congregación, circuito y ciudad.
+   * Los valores pasan por la normalización, de modo que una grafía equivalente a
+   * otra ya registrada se alinea con ella y los filtros no se parten.
+   */
+  async updateOrganization(
+    participantId: string,
+    valores: { congregation?: string | null; circuit?: string | null; city?: string | null },
+    actor?: { id?: string | null; name?: string | null },
+  ): Promise<Participant> {
+    const anterior = await this.prisma.participant.findUnique({ where: { id: participantId } });
+    if (!anterior) throw new NotFoundException('Ese participante ya no existe');
+
+    const canonicos = await this.organization.canonicalAll(valores);
+    const actualizado = await this.prisma.participant.update({
+      where: { id: participantId },
+      data: canonicos,
+    });
+
+    await this.audit.record({
+      actorType: actor?.id ? ActorType.ADMIN : ActorType.SYSTEM,
+      actorId: actor?.id ?? null,
+      actorName: actor?.name ?? null,
+      action: AUDIT_ACTIONS.PARTICIPANT_UPDATED,
+      entity: 'Participant',
+      entityId: participantId,
+      before: {
+        congregation: anterior.congregation,
+        circuit: anterior.circuit,
+        city: anterior.city,
+      },
+      after: canonicos,
+      metadata: { participantName: fullName(anterior) },
+    });
+
+    return actualizado;
   }
 
   // -------------------------------------------------------------------------
@@ -161,7 +212,7 @@ export class ParticipantsService {
     if (spouseParticipantId === participantId) {
       throw new BadRequestException('Alguien no puede ser su propio cónyuge');
     }
-    if (maritalStatus !== MaritalStatus.MARRIED && (spouseParticipantId || spouseName)) {
+    if (maritalStatus !== MaritalStatus.CASADO && (spouseParticipantId || spouseName)) {
       throw new BadRequestException('Solo se registra cónyuge cuando el estado civil es «casado»');
     }
 
@@ -177,10 +228,16 @@ export class ParticipantsService {
         if (nuevoConyuge.spouseId && nuevoConyuge.spouseId !== participantId) {
           const tercero = await tx.participant.findUnique({
             where: { id: nuevoConyuge.spouseId },
-            select: { fullName: true },
+            select: {
+              firstName: true,
+              paternalSurname: true,
+              maternalSurname: true,
+              displayName: true,
+            },
           });
           throw new BadRequestException(
-            `${nuevoConyuge.fullName} ya figura casado con ${tercero?.fullName ?? 'otra persona'}`,
+            `${displayName(nuevoConyuge)} ya figura casado con ` +
+              `${tercero ? displayName(tercero) : 'otra persona'}`,
           );
         }
       }
@@ -207,7 +264,7 @@ export class ParticipantsService {
             spouseName: null,
             // Un matrimonio lo es para los dos: si el cónyuge estaba sin
             // registrar, queda casado por la misma operación.
-            maritalStatus: MaritalStatus.MARRIED,
+            maritalStatus: MaritalStatus.CASADO,
           },
         });
       }
@@ -240,8 +297,8 @@ export class ParticipantsService {
             spouseName: actualizado.spouseName,
           },
           metadata: {
-            participantName: actual.fullName,
-            spouseName: nuevoConyuge?.fullName ?? spouseName,
+            participantName: fullName(actual),
+            spouseName: nuevoConyuge ? fullName(nuevoConyuge) : spouseName,
             spouseIsParticipant: Boolean(nuevoConyuge),
           },
         },
@@ -282,7 +339,7 @@ export class ParticipantsService {
           entity: 'Participant',
           entityId: participantId,
           before: { spouseId: actual.spouseId, spouseName: actual.spouseName },
-          metadata: { participantName: actual.fullName },
+          metadata: { participantName: fullName(actual) },
         },
         tx,
       );
@@ -309,8 +366,14 @@ export class ParticipantsService {
           { spouseId: participantId },
         ],
       },
-      select: { id: true, fullName: true },
-      orderBy: { fullName: 'asc' },
+      select: {
+        id: true,
+        firstName: true,
+        paternalSurname: true,
+        maternalSurname: true,
+        displayName: true,
+      },
+      orderBy: [...PADRON_ORDER],
     });
   }
 }

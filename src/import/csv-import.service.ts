@@ -4,6 +4,7 @@ import { parse } from 'csv-parse/sync';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
+import { OrganizationFieldsService } from '../participants/organization-fields.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -38,6 +39,7 @@ export class CsvImportService {
     private readonly time: TimeService,
     private readonly audit: AuditService,
     private readonly participants: ParticipantsService,
+    private readonly organization: OrganizationFieldsService,
   ) {}
 
   /**
@@ -60,11 +62,42 @@ export class CsvImportService {
       const rowNumber = index + 2;
       result.processed += 1;
 
-      const fullName = (row.nombre ?? row.name ?? '').trim();
+      const firstName = (row.nombre ?? row.name ?? '').trim();
+      const paternalSurname = (
+        row.apellido_paterno ??
+        row['apellido paterno'] ??
+        row.paternal_surname ??
+        ''
+      ).trim();
+      const maternalSurname = (
+        row.apellido_materno ??
+        row['apellido materno'] ??
+        row.maternal_surname ??
+        ''
+      ).trim();
+      const displayNameRaw = (
+        row.nombre_a_mostrar ??
+        row['nombre a mostrar'] ??
+        row.display_name ??
+        ''
+      ).trim();
       const rawPhone = (row.telefono ?? row.teléfono ?? row.phone ?? '').trim();
 
-      if (!fullName) {
+      if (!firstName) {
         result.errors.push({ row: rowNumber, message: 'Falta el nombre', data: row });
+        continue;
+      }
+      if (!paternalSurname) {
+        // Sin compatibilidad silenciosa con el formato anterior: aceptar
+        // «Ana López» en la columna `nombre` guardaría el apellido dentro del
+        // nombre y nadie lo notaría hasta ver un saludo equivocado.
+        result.errors.push({
+          row: rowNumber,
+          message:
+            'Falta el apellido paterno. El padrón ahora se captura en tres columnas: ' +
+            'nombre, apellido_paterno y apellido_materno (esta última opcional)',
+          data: row,
+        });
         continue;
       }
       if (!rawPhone) {
@@ -99,6 +132,20 @@ export class CsvImportService {
       const consentRaw = (row.consentimiento ?? row.consent ?? '').trim().toLowerCase();
       const hasConsent = consentRaw === '' ? true : !['no', 'false', '0'].includes(consentRaw);
 
+      const congregacion = (
+        row.congregacion ??
+        row['congregación'] ??
+        row.congregation ??
+        ''
+      ).trim();
+      const circuito = (row.circuito ?? row.circuit ?? '').trim();
+      const ciudad = (row.ciudad ?? row.city ?? '').trim();
+      const organizacion = await this.organization.canonicalAll({
+        congregation: congregacion,
+        circuit: circuito,
+        city: ciudad,
+      });
+
       const civilRaw = (row.estado_civil ?? row['estado civil'] ?? '').trim().toLowerCase();
       if (civilRaw && !MARITAL_BY_NAME[civilRaw]) {
         result.errors.push({
@@ -108,7 +155,7 @@ export class CsvImportService {
         });
         continue;
       }
-      const maritalStatus = MARITAL_BY_NAME[civilRaw] ?? MaritalStatus.UNKNOWN;
+      const maritalStatus = MARITAL_BY_NAME[civilRaw] ?? MaritalStatus.SIN_REGISTRAR;
 
       const spouseNameRaw = (row.conyuge ?? row['cónyuge'] ?? row.spouse ?? '').trim();
       const spousePhoneRaw = (
@@ -118,7 +165,7 @@ export class CsvImportService {
         ''
       ).trim();
 
-      if ((spouseNameRaw || spousePhoneRaw) && maritalStatus !== MaritalStatus.MARRIED) {
+      if ((spouseNameRaw || spousePhoneRaw) && maritalStatus !== MaritalStatus.CASADO) {
         result.errors.push({
           row: rowNumber,
           message: 'Se indicó cónyuge pero el estado civil no es «casado»',
@@ -161,7 +208,14 @@ export class CsvImportService {
         await this.prisma.participant.update({
           where: { id: existing.id },
           data: {
-            fullName,
+            firstName,
+            paternalSurname,
+            maternalSurname: maternalSurname || null,
+            ...(displayNameRaw ? { displayName: displayNameRaw } : {}),
+            // Una columna vacía no borra un dato ya capturado a mano.
+            ...(congregacion ? { congregation: organizacion.congregation } : {}),
+            ...(circuito ? { circuit: organizacion.circuit } : {}),
+            ...(ciudad ? { city: organizacion.city } : {}),
             role,
             coverageAlerts,
             // Un consentimiento ya registrado no se sobrescribe con la fecha de
@@ -187,7 +241,11 @@ export class CsvImportService {
 
       await this.prisma.participant.create({
         data: {
-          fullName,
+          firstName,
+          paternalSurname,
+          maternalSurname: maternalSurname || null,
+          displayName: displayNameRaw || null,
+          ...organizacion,
           phoneE164,
           role,
           coverageAlerts,
@@ -240,14 +298,14 @@ export class CsvImportService {
 
           await this.participants.updateMarital({
             participantId: persona.id,
-            maritalStatus: MaritalStatus.MARRIED,
+            maritalStatus: MaritalStatus.CASADO,
             spouseParticipantId: conyuge.id,
             actorId: options.actorId ?? null,
           });
         } else {
           await this.participants.updateMarital({
             participantId: persona.id,
-            maritalStatus: MaritalStatus.MARRIED,
+            maritalStatus: MaritalStatus.CASADO,
             spouseName: vinculo.spouseName ?? null,
             actorId: options.actorId ?? null,
           });

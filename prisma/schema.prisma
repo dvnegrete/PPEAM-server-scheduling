@@ -26,14 +26,17 @@ enum ParticipantStatus {
   INACTIVE
 }
 
-/// Estado civil. UNKNOWN es el valor de partida: un padrón importado no trae el
-/// dato, y asumir «soltero» afirmaría algo que nadie declaró.
+/// Estado civil. SIN_REGISTRAR es el valor de partida: un padrón importado no
+/// trae el dato, y asumir «soltero» afirmaría algo que nadie declaró.
+///
+/// Los valores van en español a propósito: se consultan y exportan directamente
+/// para armar reportes, y ahí un `MARRIED` obliga a traducir mentalmente.
 enum MaritalStatus {
-  UNKNOWN
-  SINGLE
-  MARRIED
-  WIDOWED
-  SEPARATED
+  SIN_REGISTRAR
+  SOLTERO
+  CASADO
+  VIUDO
+  SEPARADO
 }
 
 enum ParticipantRole {
@@ -168,8 +171,17 @@ model Location {
 // ---------------------------------------------------------------------------
 
 model Participant {
-  id          String  @id @default(cuid())
-  fullName    String  @map("full_name")
+  id String @id @default(cuid())
+
+  /// El nombre va en tres campos porque en un padrón hispano hacen falta los
+  /// tres: ordenar por apellido paterno, saber cuál es el nombre de pila para
+  /// saludar, y distinguir un nombre compuesto de un segundo apellido.
+  /// El materno es opcional: un solo apellido es un caso real.
+  firstName       String  @map("first_name")
+  paternalSurname String  @map("paternal_surname")
+  maternalSurname String? @map("maternal_surname")
+
+  /// Cómo prefiere que se le llame. Gana sobre la composición automática.
   displayName String? @map("display_name")
 
   /// Teléfono normalizado a E.164 (+52...). Es la llave natural en WhatsApp.
@@ -184,9 +196,17 @@ model Participant {
   /// Momento en que aceptó recibir mensajes (requisito de política de Meta).
   optInAt DateTime? @map("opt_in_at")
 
-  /// UNKNOWN es el punto de partida de todo padrón importado: distingue a quien
-  /// todavía no se le ha preguntado de quien dijo que no está casado.
-  maritalStatus MaritalStatus @default(UNKNOWN) @map("marital_status")
+  /// SIN_REGISTRAR es el punto de partida de todo padrón importado: distingue a
+  /// quien todavía no se le ha preguntado de quien dijo que no está casado.
+  maritalStatus MaritalStatus @default(SIN_REGISTRAR) @map("marital_status")
+
+  /// Datos de organización, para reportes y filtros. Opcionales: el padrón se
+  /// carga primero y estos se completan después.
+  /// Al guardarse se reutiliza la grafía ya registrada de un valor equivalente,
+  /// para que «Centro» y «centro» no convivan y partan los reportes en dos.
+  congregation String?
+  circuit      String?
+  city         String?
 
   /// Cónyuge, cuando también participa en los exhibidores.
   ///
@@ -223,6 +243,10 @@ model Participant {
   decidedOffers        CoverageOffer[]       @relation("OfferDecider")
 
   @@index([status])
+  @@index([paternalSurname, maternalSurname, firstName])
+  @@index([congregation])
+  @@index([circuit])
+  @@index([city])
   @@map("participants")
 }
 
@@ -678,11 +702,19 @@ model AuditLog {
 
 /// Usuario del panel web (separado del padrón de WhatsApp).
 model AdminUser {
-  id           String  @id @default(cuid())
-  email        String  @unique
-  passwordHash String  @map("password_hash")
-  name         String
-  active       Boolean @default(true)
+  id           String @id @default(cuid())
+  email        String @unique
+  passwordHash String @map("password_hash")
+
+  firstName       String  @map("first_name")
+  paternalSurname String  @map("paternal_surname")
+  maternalSurname String? @map("maternal_surname")
+
+  congregation String?
+  circuit      String?
+  city         String?
+
+  active Boolean @default(true)
 
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")

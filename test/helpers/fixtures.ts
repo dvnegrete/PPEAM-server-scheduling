@@ -31,6 +31,30 @@ export async function createLocation(
 
 let phoneCounter = 1000;
 
+/**
+ * Parte un nombre escrito de corrido en los tres campos del modelo.
+ *
+ * Es una concesión **solo para las pruebas**: deja los escenarios legibles
+ * (`createParticipant(prisma, id, 'Ana López')`) en lugar de tres argumentos en
+ * cada una de las cien llamadas. El código de producción nunca parte cadenas,
+ * justamente porque adivinar dónde acaba el nombre y empieza el apellido es lo
+ * que este cambio vino a eliminar.
+ */
+function partirNombre(completo: string): {
+  firstName: string;
+  paternalSurname: string;
+  maternalSurname: string | null;
+} {
+  const partes = completo.trim().split(/\s+/);
+  return {
+    firstName: partes[0],
+    // El apellido paterno es obligatorio en el modelo; con un solo nombre se
+    // rellena para que el escenario pueda construirse.
+    paternalSurname: partes[1] ?? 'DePrueba',
+    maternalSurname: partes[2] ?? null,
+  };
+}
+
 export async function createParticipant(
   prisma: PrismaService,
   locationId: string,
@@ -40,7 +64,7 @@ export async function createParticipant(
   phoneCounter += 1;
   const participant = await prisma.participant.create({
     data: {
-      fullName,
+      ...partirNombre(fullName),
       phoneE164: `+5255${String(phoneCounter).padStart(8, '0')}`,
       role,
       optInAt: new Date(),

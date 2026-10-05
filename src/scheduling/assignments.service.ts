@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ActorType, AssignmentStatus, ShiftStatus } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName, fullName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { TimeService } from '../common/time/time.service';
 import { DomainEventBus } from '../events/domain-event-bus';
@@ -84,7 +85,7 @@ export class AssignmentsService {
           cancelReason: params.reason ?? null,
           cancelReasonCode: params.reasonCode ?? null,
           // Quien captura la baja; si la origina el propio participante, es él mismo.
-          cancelledByName: params.actorName ?? assignment.participant.fullName,
+          cancelledByName: params.actorName ?? fullName(assignment.participant),
         },
       });
 
@@ -92,7 +93,7 @@ export class AssignmentsService {
         {
           actorType: params.actorType ?? ActorType.PARTICIPANT,
           actorId: params.actorId ?? assignment.participantId,
-          actorName: params.actorName ?? assignment.participant.fullName,
+          actorName: params.actorName ?? fullName(assignment.participant),
           action: AUDIT_ACTIONS.ASSIGNMENT_CANCELLED,
           entity: 'Assignment',
           entityId: assignment.id,
@@ -105,7 +106,7 @@ export class AssignmentsService {
           metadata: {
             shiftId: assignment.shiftId,
             shiftLabel,
-            participantName: assignment.participant.fullName,
+            participantName: fullName(assignment.participant),
           },
         },
         tx,
@@ -125,7 +126,7 @@ export class AssignmentsService {
       shiftId: assignment.shiftId,
       assignmentId: assignment.id,
       participantId: assignment.participantId,
-      participantName: assignment.participant.fullName,
+      participantName: fullName(assignment.participant),
       remaining,
       capacity: assignment.shift.capacity,
       minCapacity: location.minCapacity,
@@ -146,7 +147,7 @@ export class AssignmentsService {
     }
 
     this.logger.log(
-      `${assignment.participant.fullName} canceló ${shiftLabel}; quedan ${remaining} de ${assignment.shift.capacity}` +
+      `${displayName(assignment.participant)} canceló ${shiftLabel}; quedan ${remaining} de ${assignment.shift.capacity}` +
         (urgent ? ' (urgente)' : ''),
     );
   }
@@ -186,7 +187,7 @@ export class AssignmentsService {
       });
       if (!participant) throw new NotFoundException('Ese participante ya no existe');
       if (participant.status !== 'ACTIVE') {
-        throw new BadRequestException(`${participant.fullName} no está activo en el padrón`);
+        throw new BadRequestException(`${displayName(participant)} no está activo en el padrón`);
       }
 
       const occupied = await tx.assignment.count({
@@ -202,7 +203,7 @@ export class AssignmentsService {
         },
       });
       if (existing && OCCUPYING_STATUSES.includes(existing.status)) {
-        throw new BadRequestException(`${participant.fullName} ya tiene lugar en ese turno`);
+        throw new BadRequestException(`${displayName(participant)} ya tiene lugar en ese turno`);
       }
 
       // La fila se reutiliza si esta persona había cancelado antes: el índice único
@@ -257,14 +258,14 @@ export class AssignmentsService {
           metadata: {
             shiftId: shift.id,
             shiftLabel,
-            participantName: participant.fullName,
+            participantName: fullName(participant),
             manual: true,
           },
         },
         tx,
       );
 
-      return { shiftLabel, participantName: participant.fullName };
+      return { shiftLabel, participantName: displayName(participant) };
     });
 
     this.logger.log(
@@ -329,7 +330,7 @@ export class AssignmentsService {
       remaining,
       minCapacity: location.minCapacity,
       urgent,
-      remainingParticipantNames: survivors.map((item) => item.participant.fullName),
+      remainingParticipantNames: survivors.map((item) => displayName(item.participant)),
     };
     await this.events.publish(DOMAIN_EVENTS.SHIFT_LOW_STAFF, event);
   }

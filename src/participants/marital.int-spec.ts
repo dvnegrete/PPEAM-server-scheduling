@@ -27,7 +27,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
   it('todo el padrón importado nace sin el dato registrado', async () => {
     const ana = await createParticipant(ctx.prisma, locationId, 'Ana López');
-    expect(ana.maritalStatus).toBe(MaritalStatus.UNKNOWN);
+    expect(ana.maritalStatus).toBe(MaritalStatus.SIN_REGISTRAR);
   });
 
   describe('cónyuge que también participa', () => {
@@ -37,7 +37,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
@@ -48,7 +48,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       expect(anaFinal.spouseId).toBe(beto.id);
       expect(betoFinal.spouseId).toBe(ana.id);
       // El matrimonio lo es para los dos, aunque solo se capturara en uno.
-      expect(betoFinal.maritalStatus).toBe(MaritalStatus.MARRIED);
+      expect(betoFinal.maritalStatus).toBe(MaritalStatus.CASADO);
       expect(anaFinal.spouseName).toBeNull();
       expect(betoFinal.spouseName).toBeNull();
     });
@@ -59,7 +59,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
@@ -78,7 +78,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
@@ -86,7 +86,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       await expect(
         participantes.updateMarital({
           participantId: carla.id,
-          maritalStatus: MaritalStatus.MARRIED,
+          maritalStatus: MaritalStatus.CASADO,
           spouseParticipantId: beto.id,
           ...admin,
         }),
@@ -104,13 +104,13 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: carlos.id,
         ...admin,
       });
@@ -129,7 +129,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       await expect(
         participantes.updateMarital({
           participantId: ana.id,
-          maritalStatus: MaritalStatus.MARRIED,
+          maritalStatus: MaritalStatus.CASADO,
           spouseParticipantId: ana.id,
           ...admin,
         }),
@@ -143,7 +143,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseName: 'Julio Hernández',
         ...admin,
       });
@@ -151,7 +151,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       const anaFinal = await ctx.prisma.participant.findUniqueOrThrow({ where: { id: ana.id } });
       expect(anaFinal.spouseName).toBe('Julio Hernández');
       expect(anaFinal.spouseId).toBeNull();
-      expect(anaFinal.maritalStatus).toBe(MaritalStatus.MARRIED);
+      expect(anaFinal.maritalStatus).toBe(MaritalStatus.CASADO);
       // No se crea ningún participante por el cónyuge que no participa.
       expect(await ctx.prisma.participant.count()).toBe(1);
     });
@@ -163,7 +163,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       await expect(
         participantes.updateMarital({
           participantId: ana.id,
-          maritalStatus: MaritalStatus.MARRIED,
+          maritalStatus: MaritalStatus.CASADO,
           spouseParticipantId: beto.id,
           spouseName: 'Julio Hernández',
           ...admin,
@@ -177,14 +177,14 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseName: 'Beto Ruiz',
         ...admin,
       });
       // Después resulta que Beto sí entró al padrón.
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
@@ -202,7 +202,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       await expect(
         participantes.updateMarital({
           participantId: ana.id,
-          maritalStatus: MaritalStatus.SINGLE,
+          maritalStatus: MaritalStatus.SOLTERO,
           spouseName: 'Julio Hernández',
           ...admin,
         }),
@@ -215,29 +215,29 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.WIDOWED,
+        maritalStatus: MaritalStatus.VIUDO,
         ...admin,
       });
 
       const anaFinal = await ctx.prisma.participant.findUniqueOrThrow({ where: { id: ana.id } });
       const betoFinal = await ctx.prisma.participant.findUniqueOrThrow({ where: { id: beto.id } });
-      expect(anaFinal.maritalStatus).toBe(MaritalStatus.WIDOWED);
+      expect(anaFinal.maritalStatus).toBe(MaritalStatus.VIUDO);
       expect(anaFinal.spouseId).toBeNull();
       expect(betoFinal.spouseId).toBeNull();
     });
 
     it('registra los cuatro estados civiles', async () => {
       for (const estado of [
-        MaritalStatus.SINGLE,
-        MaritalStatus.MARRIED,
-        MaritalStatus.WIDOWED,
-        MaritalStatus.SEPARATED,
+        MaritalStatus.SOLTERO,
+        MaritalStatus.CASADO,
+        MaritalStatus.VIUDO,
+        MaritalStatus.SEPARADO,
       ]) {
         const persona = await createParticipant(ctx.prisma, locationId, `Persona ${estado}`);
         await participantes.updateMarital({
@@ -262,13 +262,13 @@ describe('Estado civil y cónyuge (integración)', () => {
       // Carla y Dora se casan entre ellas, así que dejan de estar disponibles.
       await participantes.updateMarital({
         participantId: carla.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: dora.id,
         ...admin,
       });
 
       const candidatos = await participantes.spouseCandidates(ana.id, locationId);
-      expect(candidatos.map((c) => c.fullName)).toEqual(['Beto Ruiz']);
+      expect(candidatos.map((c) => `${c.firstName} ${c.paternalSurname}`)).toEqual(['Beto Ruiz']);
     });
 
     it('incluye al cónyuge vigente, para poder mostrar la selección actual', async () => {
@@ -277,13 +277,13 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
 
       const candidatos = await participantes.spouseCandidates(ana.id, locationId);
-      expect(candidatos.map((c) => c.fullName)).toContain('Beto Ruiz');
+      expect(candidatos.map((c) => c.firstName)).toContain('Beto');
     });
 
     it('excluye a quien ya está casado con alguien de fuera del padrón', async () => {
@@ -295,13 +295,13 @@ describe('Estado civil y cónyuge (integración)', () => {
       // vacío, pero no por eso está disponible.
       await participantes.updateMarital({
         participantId: carla.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseName: 'Julio Hernández',
         ...admin,
       });
 
       const candidatos = await participantes.spouseCandidates(ana.id, locationId);
-      expect(candidatos.map((c) => c.fullName)).toEqual(['Beto Ruiz']);
+      expect(candidatos.map((c) => `${c.firstName} ${c.paternalSurname}`)).toEqual(['Beto Ruiz']);
     });
 
     it('no se ofrece a sí mismo', async () => {
@@ -318,7 +318,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
       await participantes.updateMarital({
         participantId: ana.id,
-        maritalStatus: MaritalStatus.MARRIED,
+        maritalStatus: MaritalStatus.CASADO,
         spouseParticipantId: beto.id,
         ...admin,
       });
@@ -328,7 +328,7 @@ describe('Estado civil y cónyuge (integración)', () => {
       const betoFinal = await ctx.prisma.participant.findUniqueOrThrow({ where: { id: beto.id } });
       expect(anaFinal.spouseId).toBeNull();
       expect(betoFinal.spouseId).toBeNull();
-      expect(anaFinal.maritalStatus).toBe(MaritalStatus.MARRIED);
+      expect(anaFinal.maritalStatus).toBe(MaritalStatus.CASADO);
     });
   });
 
@@ -338,7 +338,7 @@ describe('Estado civil y cónyuge (integración)', () => {
 
     await participantes.updateMarital({
       participantId: ana.id,
-      maritalStatus: MaritalStatus.MARRIED,
+      maritalStatus: MaritalStatus.CASADO,
       spouseParticipantId: beto.id,
       ...admin,
     });
@@ -347,6 +347,6 @@ describe('Estado civil y cónyuge (integración)', () => {
 
     const anaFinal = await ctx.prisma.participant.findUniqueOrThrow({ where: { id: ana.id } });
     expect(anaFinal.spouseId).toBeNull();
-    expect(anaFinal.maritalStatus).toBe(MaritalStatus.MARRIED);
+    expect(anaFinal.maritalStatus).toBe(MaritalStatus.CASADO);
   });
 });

@@ -42,18 +42,18 @@ export const ROLE_BY_NAME: Record<string, 'PARTICIPANT' | 'SUPERVISOR' | 'ADMIN'
   administrador: 'ADMIN',
 };
 
-/** Estados civiles aceptados en el CSV, con y sin acento. */
-export const MARITAL_BY_NAME: Record<string, 'SINGLE' | 'MARRIED' | 'WIDOWED' | 'SEPARATED'> = {
-  soltero: 'SINGLE',
-  soltera: 'SINGLE',
-  casado: 'MARRIED',
-  casada: 'MARRIED',
-  viudo: 'WIDOWED',
-  viuda: 'WIDOWED',
-  separado: 'SEPARATED',
-  separada: 'SEPARATED',
-  divorciado: 'SEPARATED',
-  divorciada: 'SEPARATED',
+/** Estados civiles aceptados en el CSV, con sus variantes de género. */
+export const MARITAL_BY_NAME: Record<string, 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO'> = {
+  soltero: 'SOLTERO',
+  soltera: 'SOLTERO',
+  casado: 'CASADO',
+  casada: 'CASADO',
+  viudo: 'VIUDO',
+  viuda: 'VIUDO',
+  separado: 'SEPARADO',
+  separada: 'SEPARADO',
+  divorciado: 'SEPARADO',
+  divorciada: 'SEPARADO',
 };
 
 /**
@@ -61,6 +61,13 @@ export const MARITAL_BY_NAME: Record<string, 'SINGLE' | 'MARRIED' | 'WIDOWED' | 
  * Se acumula durante la lectura del archivo y se resuelve al final, cuando ya
  * existen todas las personas.
  */
+/** Datos de organización que trae una fila del CSV. */
+export interface OrganizationRow {
+  congregation: string | null;
+  circuit: string | null;
+  city: string | null;
+}
+
 export interface SpouseLink {
   row: number;
   /** Teléfono de quien declara el matrimonio. */
