@@ -86,6 +86,87 @@ export class CreateParticipantDto {
   city?: string;
 }
 
+/**
+ * Edición de un participante desde el Padrón.
+ *
+ * Es un PATCH: lo que no venga no se toca. Por eso todo es opcional y los
+ * campos que se pueden borrar se tipan como `string | null` —mandar `null`
+ * vacía el dato—, mientras el nombre y el apellido paterno solo aceptan un
+ * valor con contenido, porque el modelo los exige.
+ */
+export class UpdateParticipantDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'El nombre no puede quedar vacío' })
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'El apellido paterno no puede quedar vacío' })
+  paternalSurname?: string;
+
+  /** `null` o cadena vacía lo borran: hay quien usa un solo apellido. */
+  @IsOptional()
+  @IsString()
+  maternalSurname?: string | null;
+
+  /** `null` o cadena vacía lo borran: se vuelve a saludar por el nombre de pila. */
+  @IsOptional()
+  @IsString()
+  displayName?: string | null;
+
+  /** El formato lo valida PhoneService, igual que en el alta. */
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'El teléfono no puede quedar vacío' })
+  phone?: string;
+
+  /** Del vínculo con el punto, no de la persona. */
+  @IsOptional()
+  @IsIn(['participante', 'encargado', 'admin'], {
+    message: 'Rol no válido: usa participante, encargado o admin',
+  })
+  role?: string;
+
+  @IsOptional()
+  @IsBoolean()
+  coverageAlerts?: boolean;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'PAUSED', 'INACTIVE'], {
+    message: 'Estado no válido: usa ACTIVE, PAUSED o INACTIVE',
+  })
+  status?: 'ACTIVE' | 'PAUSED' | 'INACTIVE';
+
+  @IsOptional()
+  @IsString()
+  congregation?: string | null;
+
+  @IsOptional()
+  @IsString()
+  circuit?: string | null;
+
+  @IsOptional()
+  @IsString()
+  city?: string | null;
+
+  @IsOptional()
+  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO'], {
+    message: 'Estado civil no válido',
+  })
+  maritalStatus?: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO';
+
+  /** Cónyuge que también es participante. Excluyente con `spouseName`. */
+  @IsOptional()
+  @IsString()
+  spouseParticipantId?: string | null;
+
+  /** Nombre del cónyuge que no participa. Excluyente con `spouseParticipantId`. */
+  @IsOptional()
+  @IsString()
+  spouseName?: string | null;
+}
+
 /** Congregación, circuito y ciudad de una persona. */
 export class UpdateOrganizationDto {
   @IsOptional()

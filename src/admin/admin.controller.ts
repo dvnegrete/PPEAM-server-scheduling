@@ -13,6 +13,7 @@ import {
 import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { CsvImportService } from '../import/csv-import.service';
+import { ParticipantProfileService } from '../participants/participant-profile.service';
 import { ParticipantsService } from '../participants/participants.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
@@ -25,6 +26,7 @@ import {
   CreateWindowDto,
   UpdateMaritalDto,
   UpdateOrganizationDto,
+  UpdateParticipantDto,
   ImportDto,
   LoginDto,
   MonthQueryDto,
@@ -43,7 +45,7 @@ import {
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
-import { ActorType } from '@prisma/client';
+import { ActorType, MaritalStatus, ParticipantRole, ParticipantStatus } from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
 @Controller('api/admin')
@@ -61,6 +63,7 @@ export class AdminController {
     private readonly pollDraft_: PollDraftService,
     private readonly organization: OrganizationFieldsService,
     private readonly recurring: RecurringAssignmentsService,
+    private readonly profiles: ParticipantProfileService,
   ) {}
 
   @Post('login')
@@ -93,44 +96,58 @@ export class AdminController {
     const padron = await this.prisma.participant.findMany({
       where: { memberships: { some: { locationId: id, active: true } } },
       orderBy: [...PADRON_ORDER],
-      select: {
-        id: true,
-        firstName: true,
-        paternalSurname: true,
-        maternalSurname: true,
-        displayName: true,
-        phoneE164: true,
-        status: true,
-        optInAt: true,
-        // El rol y la preferencia de avisos son del vínculo con este punto.
-        memberships: {
-          where: { locationId: id },
-          select: { role: true, coverageAlerts: true, isPrimary: true },
-        },
-        maritalStatus: true,
-        congregation: true,
-        circuit: true,
-        city: true,
-        spouseName: true,
-        spouse: {
-          select: {
-            id: true,
-            firstName: true,
-            paternalSurname: true,
-            maternalSurname: true,
-            displayName: true,
-          },
-        },
-      },
+      select: padronSelect(id),
     });
 
-    // Se aplana la membresía para que el panel reciba la misma forma de antes.
-    return padron.map(({ memberships, ...persona }) => ({
-      ...persona,
-      role: memberships[0]?.role ?? 'PARTICIPANT',
-      coverageAlerts: memberships[0]?.coverageAlerts ?? true,
-      isPrimaryLocation: memberships[0]?.isPrimary ?? false,
-    }));
+    return padron.map(flattenMembership);
+  }
+
+  /**
+   * Edición de un participante desde el Padrón.
+   *
+   * El punto va en la ruta porque el rol y la preferencia de avisos son del
+   * vínculo, no de la persona: sin saber de qué punto se habla no se puede
+   * resolver cuál membresía tocar.
+   *
+   * Devuelve la fila con la misma forma que el padrón, más lo que el diálogo
+   * necesita contar: cuántos turnos se liberaron y los avisos que no impidieron
+   * guardar pero conviene leer.
+   */
+  @Patch('locations/:id/participants/:participantId')
+  @UseGuards(AdminAuthGuard)
+  async updateParticipant(
+    @Param('id') id: string,
+    @Param('participantId') participantId: string,
+    @Body() dto: UpdateParticipantDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    const { cancelledShifts, warnings } = await this.profiles.updateProfile({
+      participantId,
+      locationId: id,
+      firstName: dto.firstName,
+      paternalSurname: dto.paternalSurname,
+      maternalSurname: dto.maternalSurname,
+      displayName: dto.displayName,
+      phone: dto.phone,
+      role: dto.role ? ROLE_BY_NAME[dto.role.toLowerCase()] : undefined,
+      coverageAlerts: dto.coverageAlerts,
+      status: dto.status ? ParticipantStatus[dto.status] : undefined,
+      congregation: dto.congregation,
+      circuit: dto.circuit,
+      city: dto.city,
+      maritalStatus: dto.maritalStatus ? MaritalStatus[dto.maritalStatus] : undefined,
+      spouseParticipantId: dto.spouseParticipantId,
+      spouseName: dto.spouseName,
+      actorId: admin.sub,
+      actorName: admin.name,
+    });
+
+    const fila = await this.prisma.participant.findUniqueOrThrow({
+      where: { id: participantId },
+      select: padronSelect(id),
+    });
+
+    return { ...flattenMembership(fila), cancelledShifts, warnings };
   }
 
   /** Estado civil y cónyuge de un participante. */
@@ -503,4 +520,54 @@ export class AdminController {
       limit: limit ? Number(limit) : undefined,
     });
   }
+}
+
+/**
+ * Columnas del padrón. Se comparten entre la consulta y la edición para que el
+ * panel reciba exactamente la misma forma por los dos caminos.
+ */
+function padronSelect(locationId: string) {
+  return {
+    id: true,
+    firstName: true,
+    paternalSurname: true,
+    maternalSurname: true,
+    displayName: true,
+    phoneE164: true,
+    status: true,
+    optInAt: true,
+    // El rol y la preferencia de avisos son del vínculo con este punto.
+    memberships: {
+      where: { locationId },
+      select: { role: true, coverageAlerts: true, isPrimary: true },
+    },
+    maritalStatus: true,
+    congregation: true,
+    circuit: true,
+    city: true,
+    spouseName: true,
+    spouse: {
+      select: {
+        id: true,
+        firstName: true,
+        paternalSurname: true,
+        maternalSurname: true,
+        displayName: true,
+      },
+    },
+  } as const;
+}
+
+type FilaPadron = {
+  memberships: Array<{ role: ParticipantRole; coverageAlerts: boolean; isPrimary: boolean }>;
+};
+
+/** Aplana la membresía, para que el panel no tenga que saber que existe. */
+function flattenMembership<T extends FilaPadron>({ memberships, ...persona }: T) {
+  return {
+    ...persona,
+    role: memberships[0]?.role ?? 'PARTICIPANT',
+    coverageAlerts: memberships[0]?.coverageAlerts ?? true,
+    isPrimaryLocation: memberships[0]?.isPrimary ?? false,
+  };
 }
