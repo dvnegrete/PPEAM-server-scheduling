@@ -188,6 +188,15 @@ model Participant {
   /// Teléfono normalizado a E.164 (+52...). Es la llave natural en WhatsApp.
   phoneE164 String @unique @map("phone_e164")
 
+  /// Cuándo se cambió el número por última vez; null si nunca se cambió.
+  ///
+  /// La ventana de 24 horas de WhatsApp es del **número**, no de la persona, y
+  /// los mensajes de entrada se guardan ligados al participante. Sin esta marca,
+  /// un mensaje recibido en el número viejo haría creer que la ventana del nuevo
+  /// está abierta, el sistema mandaría un mensaje libre en vez de una plantilla
+  /// y Meta lo rechazaría sin que nadie se enterara.
+  phoneChangedAt DateTime? @map("phone_changed_at")
+
   /// El estado sí es de la persona: si se da de baja, lo es en todos los puntos.
   status ParticipantStatus @default(ACTIVE)
 
