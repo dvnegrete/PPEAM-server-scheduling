@@ -1,5 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AssignmentOrigin, AssignmentStatus, Location, ShiftStatus } from '@prisma/client';
+import {
+  AssignmentOrigin,
+  AssignmentStatus,
+  Location,
+  ParticipantStatus,
+  ShiftStatus,
+} from '@prisma/client';
 import { DateTime } from 'luxon';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { TimeService, Weekday } from '../common/time/time.service';
@@ -37,7 +43,11 @@ export class ScheduleGeneratorService {
       where: { locationId, active: true },
       include: {
         recurringAssignments: {
-          where: { active: true },
+          // Quien está pausado o dado de baja no se sienta, aunque siga siendo
+          // titular de la franja. Su turno fijo se conserva a propósito: cuando
+          // vuelva a estar activo recupera su lugar sin tener que recapturarlo,
+          // y mientras tanto el hueco queda visible para cubrirlo.
+          where: { active: true, participant: { status: ParticipantStatus.ACTIVE } },
           include: { participant: true },
           orderBy: { createdAt: 'asc' },
         },

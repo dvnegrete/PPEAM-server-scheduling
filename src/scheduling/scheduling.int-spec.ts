@@ -1,6 +1,7 @@
 import {
   ActorType,
   AssignmentStatus,
+  ParticipantStatus,
   CoverageOfferStatus,
   CoverageRequestStatus,
   ShiftStatus,
@@ -120,6 +121,90 @@ describe('Motor de turnos (integración)', () => {
       expect(result.assignmentsCreated).toBe(result.shiftsCreated * 2);
       const shift = await ctx.prisma.shift.findFirstOrThrow({ orderBy: { startsAt: 'asc' } });
       expect(shift.status).toBe(ShiftStatus.FULL);
+    });
+
+    it('no sienta a un titular que está pausado', async () => {
+      // Si el generador no mirara el estado, pausar a alguien no serviría de
+      // nada: cada mes nuevo lo volvería a sentar en su franja y habría que
+      // cancelarlo a mano una y otra vez.
+      const location = await createLocation(ctx.prisma);
+      const template = await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId: location.id,
+          weekday: 1,
+          startMinute: 7 * 60,
+          endMinute: 9 * 60,
+          capacity: 2,
+          weekOfMonth: 0,
+        },
+      });
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+      await ctx.prisma.recurringAssignment.createMany({
+        data: [
+          { shiftTemplateId: template.id, participantId: ana.id },
+          { shiftTemplateId: template.id, participantId: beto.id },
+        ],
+      });
+      await ctx.prisma.participant.update({
+        where: { id: beto.id },
+        data: { status: ParticipantStatus.PAUSED },
+      });
+
+      const result = await generator.generateMonth(location.id, 2026, 9);
+
+      // Solo Ana se sienta: un titular por turno en lugar de dos.
+      expect(result.assignmentsCreated).toBe(result.shiftsCreated);
+      const asignaciones = await ctx.prisma.assignment.findMany({
+        select: { participantId: true },
+        distinct: ['participantId'],
+      });
+      expect(asignaciones.map((a) => a.participantId)).toEqual([ana.id]);
+
+      // El turno queda incompleto a propósito, con el hueco visible.
+      const shift = await ctx.prisma.shift.findFirstOrThrow({ orderBy: { startsAt: 'asc' } });
+      expect(shift.status).toBe(ShiftStatus.OPEN);
+
+      // Y su turno fijo se conserva: al reactivarlo recupera su lugar sin
+      // tener que volver a capturarlo.
+      expect(
+        await ctx.prisma.recurringAssignment.count({
+          where: { participantId: beto.id, active: true },
+        }),
+      ).toBe(1);
+    });
+
+    it('vuelve a sentar al titular cuando se reactiva', async () => {
+      const location = await createLocation(ctx.prisma);
+      const template = await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId: location.id,
+          weekday: 1,
+          startMinute: 7 * 60,
+          endMinute: 9 * 60,
+          capacity: 2,
+          weekOfMonth: 0,
+        },
+      });
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      await ctx.prisma.recurringAssignment.create({
+        data: { shiftTemplateId: template.id, participantId: ana.id },
+      });
+      await ctx.prisma.participant.update({
+        where: { id: ana.id },
+        data: { status: ParticipantStatus.PAUSED },
+      });
+
+      expect((await generator.generateMonth(location.id, 2026, 9)).assignmentsCreated).toBe(0);
+
+      await ctx.prisma.participant.update({
+        where: { id: ana.id },
+        data: { status: ParticipantStatus.ACTIVE },
+      });
+
+      // Octubre, para no chocar con los turnos de septiembre ya materializados.
+      const result = await generator.generateMonth(location.id, 2026, 10);
+      expect(result.assignmentsCreated).toBe(result.shiftsCreated);
     });
 
     it('no duplica turnos ni pisa cambios al volver a generar el mismo mes', async () => {
