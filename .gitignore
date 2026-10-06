@@ -6,3 +6,6 @@ coverage/
 .env.*
 !.env.example
 .baileys-session/
+
+# Caché incremental de TypeScript: se regenera en cada revisión de tipos
+*.tsbuildinfo

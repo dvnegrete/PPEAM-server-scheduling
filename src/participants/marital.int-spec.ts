@@ -53,6 +53,62 @@ describe('Estado civil y cónyuge (integración)', () => {
       expect(betoFinal.spouseName).toBeNull();
     });
 
+    it('el vínculo sobrevive a un cambio de teléfono', async () => {
+      // El teléfono solo sirve para localizar a la persona al importar el CSV.
+      // Lo que queda guardado es la referencia al registro, así que cambiar de
+      // número no desarma el matrimonio ni lo apunta a nadie más.
+      const ana = await createParticipant(ctx.prisma, locationId, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, locationId, 'Beto Ruiz');
+
+      await participantes.updateMarital({
+        participantId: ana.id,
+        maritalStatus: MaritalStatus.CASADO,
+        spouseParticipantId: beto.id,
+        ...admin,
+      });
+
+      await ctx.prisma.participant.update({
+        where: { id: beto.id },
+        data: { phoneE164: '+5255000011122' },
+      });
+
+      const anaFinal = await ctx.prisma.participant.findUniqueOrThrow({
+        where: { id: ana.id },
+        include: { spouse: true },
+      });
+      expect(anaFinal.spouseId).toBe(beto.id);
+      expect(anaFinal.spouse?.firstName).toBe('Beto');
+      expect(anaFinal.spouse?.phoneE164).toBe('+5255000011122');
+
+      const betoFinal = await ctx.prisma.participant.findUniqueOrThrow({
+        where: { id: beto.id },
+      });
+      expect(betoFinal.spouseId).toBe(ana.id);
+    });
+
+    it('no guarda el teléfono del cónyuge en ninguna columna', async () => {
+      // Si el número quedara copiado en el registro, sería un segundo lugar
+      // donde el dato puede quedar viejo sin que nadie se entere.
+      const ana = await createParticipant(ctx.prisma, locationId, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, locationId, 'Beto Ruiz');
+
+      await participantes.updateMarital({
+        participantId: ana.id,
+        maritalStatus: MaritalStatus.CASADO,
+        spouseParticipantId: beto.id,
+        ...admin,
+      });
+
+      const [fila] = await ctx.prisma.$queryRaw<Array<Record<string, unknown>>>`
+        SELECT * FROM participants WHERE id = ${ana.id}
+      `;
+      const copiado = Object.entries(fila).filter(
+        ([columna, valor]) =>
+          columna !== 'phone_e164' && typeof valor === 'string' && valor === beto.phoneE164,
+      );
+      expect(copiado).toEqual([]);
+    });
+
     it('deja registro en bitácora de quién lo capturó', async () => {
       const ana = await createParticipant(ctx.prisma, locationId, 'Ana López');
       const beto = await createParticipant(ctx.prisma, locationId, 'Beto Ruiz');
