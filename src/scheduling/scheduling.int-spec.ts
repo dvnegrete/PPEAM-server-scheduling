@@ -1,4 +1,5 @@
 import {
+  ActorType,
   AssignmentStatus,
   CoverageOfferStatus,
   CoverageRequestStatus,
@@ -244,6 +245,94 @@ describe('Motor de turnos (integración)', () => {
         remainingParticipantNames: ['Beto Ruiz'],
       });
       ctx.events.off(DOMAIN_EVENTS.SHIFT_LOW_STAFF, lowStaff);
+    });
+
+    it('cancela sin convocar cuando lo pide el administrador', async () => {
+      // Una baja administrativa no es lo mismo que quince cancelaciones de
+      // última hora: si cada turno abriera su convocatoria, el grupo recibiría
+      // una ráfaga de avisos. El hueco queda visible en el tablero y el
+      // administrador decide cuándo convocar.
+      const location = await createLocation(ctx.prisma, { minCapacity: 2 });
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+      const shift = await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        participantIds: [ana.id, beto.id],
+      });
+      const assignment = await ctx.prisma.assignment.findFirstOrThrow({
+        where: { shiftId: shift.id, participantId: ana.id },
+      });
+
+      await assignments.cancel({
+        assignmentId: assignment.id,
+        actorId: 'admin-1',
+        actorName: 'Elena Mora',
+        actorType: ActorType.ADMIN,
+        reasonCode: 'baja',
+        notify: false,
+      });
+
+      // El lugar sí se libera y el turno se recalcula: eso no es negociable.
+      const updated = await ctx.prisma.assignment.findUniqueOrThrow({
+        where: { id: assignment.id },
+      });
+      expect(updated.status).toBe(AssignmentStatus.CANCELLED);
+      expect(updated.cancelledByName).toBe('Elena Mora');
+      expect((await ctx.prisma.shift.findUniqueOrThrow({ where: { id: shift.id } })).status).toBe(
+        ShiftStatus.OPEN,
+      );
+
+      // Pero no se convoca a nadie ni se molesta al encargado.
+      expect(await ctx.prisma.coverageRequest.count()).toBe(0);
+      expect(await ctx.prisma.supervisorTask.count()).toBe(0);
+      expect(await ctx.prisma.outboxMessage.count()).toBe(0);
+    });
+
+    it('deja rastro en bitácora aunque no se convoque', async () => {
+      // El rastro va dentro de la transacción: silenciar la convocatoria no
+      // puede silenciar el registro de quién quitó a quién.
+      const location = await createLocation(ctx.prisma);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const shift = await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        participantIds: [ana.id],
+      });
+      const assignment = await ctx.prisma.assignment.findFirstOrThrow({
+        where: { shiftId: shift.id },
+      });
+
+      await assignments.cancel({
+        assignmentId: assignment.id,
+        actorId: 'admin-1',
+        actorName: 'Elena Mora',
+        actorType: ActorType.ADMIN,
+        notify: false,
+      });
+
+      const registro = await ctx.prisma.auditLog.findFirstOrThrow({
+        where: { action: 'assignment.cancelled' },
+      });
+      expect(registro.actorName).toBe('Elena Mora');
+      expect(registro.entityId).toBe(assignment.id);
+    });
+
+    it('por omisión sigue convocando', async () => {
+      // La bandera es la excepción, no la norma: quien cancela por su cuenta
+      // desde WhatsApp tiene que seguir dejando una vacante publicada.
+      const location = await createLocation(ctx.prisma);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+      const shift = await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        participantIds: [ana.id, beto.id],
+      });
+      const assignment = await ctx.prisma.assignment.findFirstOrThrow({
+        where: { shiftId: shift.id, participantId: ana.id },
+      });
+
+      await assignments.cancel({ assignmentId: assignment.id });
+
+      expect(await ctx.prisma.coverageRequest.count()).toBe(1);
     });
 
     it('rechaza cancelar dos veces el mismo turno', async () => {

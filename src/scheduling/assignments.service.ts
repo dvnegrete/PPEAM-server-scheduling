@@ -32,6 +32,19 @@ export interface CancelParams {
    * motivos propios sin tocar el dominio; la validación vive en el DTO.
    */
   reasonCode?: string;
+  /**
+   * Si hay que convocar a alguien para el hueco. Por omisión sí.
+   *
+   * Con `false` se cancela en silencio: no se publica el evento —que avisa al
+   * encargado—, no se abre la cobertura y no se emite la alerta de falta de
+   * gente. Es lo que necesita una baja administrativa: dar de baja a quien tiene
+   * quince turnos futuros abriría quince convocatorias y saturaría el grupo de
+   * golpe, cuando lo que toca es que el administrador decida cuándo convocar.
+   *
+   * La bitácora y el recálculo del turno **no** se omiten nunca: van dentro de
+   * la transacción y son el rastro del movimiento.
+   */
+  notify?: boolean;
 }
 
 @Injectable()
@@ -118,6 +131,14 @@ export class AssignmentsService {
         where: { shiftId: assignment.shiftId, status: { in: OCCUPYING_STATUSES } },
       });
     });
+
+    if (params.notify === false) {
+      this.logger.log(
+        `${displayName(assignment.participant)} queda fuera de ${shiftLabel} sin convocatoria; ` +
+          `quedan ${remaining} de ${assignment.shift.capacity}`,
+      );
+      return;
+    }
 
     const urgent = this.time.isWithinHours(assignment.shift.startsAt, settings.urgentWindowHours);
 
