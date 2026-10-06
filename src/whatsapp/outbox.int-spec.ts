@@ -99,6 +99,94 @@ describe('Outbox de mensajes (integración)', () => {
     expect(registro.status).toBe(OutboxStatus.PENDING);
   });
 
+  describe('cancelar lo pendiente de alguien', () => {
+    it('cancela los envíos que no han salido y libera su llave', async () => {
+      // Al cambiar un teléfono, lo pendiente iría al número viejo: `enqueue`
+      // congela el destinatario dentro del payload y el worker lo manda tal cual.
+      const location = await createLocation(ctx.prisma);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+
+      await outbox.enqueue(MessageBuilder.text(ana.phoneE164, 'Recordatorio'), {
+        participantId: ana.id,
+        dedupeKey: 'recordatorio:turno-1',
+      });
+
+      const cancelados = await outbox.cancelPendingFor(ana.id, 'cambio de teléfono');
+
+      expect(cancelados).toBe(1);
+      const registro = await ctx.prisma.outboxMessage.findFirstOrThrow();
+      expect(registro.status).toBe(OutboxStatus.CANCELLED);
+      expect(registro.error).toBe('cambio de teléfono');
+      expect(registro.dedupeKey).not.toBe('recordatorio:turno-1');
+
+      // Y lo que importa: el mismo aviso se puede volver a encolar, ahora al
+      // número nuevo. Sin liberar la llave, el upsert de `enqueue` lo bloquearía
+      // para siempre porque deja la fila existente intacta.
+      await outbox.enqueue(MessageBuilder.text('+525599998888', 'Recordatorio'), {
+        participantId: ana.id,
+        dedupeKey: 'recordatorio:turno-1',
+      });
+
+      const pendientes = await ctx.prisma.outboxMessage.findMany({
+        where: { status: OutboxStatus.PENDING },
+      });
+      expect(pendientes).toHaveLength(1);
+      expect(pendientes[0].toPhone).toBe('+525599998888');
+    });
+
+    it('no toca lo que ya salió ni lo que está en vuelo', async () => {
+      const location = await createLocation(ctx.prisma);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+
+      await outbox.enqueue(MessageBuilder.text(ana.phoneE164, 'Enviado'), {
+        participantId: ana.id,
+        dedupeKey: 'enviado',
+      });
+      await outbox.enqueue(MessageBuilder.text(ana.phoneE164, 'En vuelo'), {
+        participantId: ana.id,
+        dedupeKey: 'en-vuelo',
+      });
+      await ctx.prisma.outboxMessage.update({
+        where: { dedupeKey: 'enviado' },
+        data: { status: OutboxStatus.SENT },
+      });
+      await ctx.prisma.outboxMessage.update({
+        where: { dedupeKey: 'en-vuelo' },
+        data: { status: OutboxStatus.SENDING },
+      });
+
+      expect(await outbox.cancelPendingFor(ana.id, 'cambio de teléfono')).toBe(0);
+
+      // Cancelar un envío en vuelo no lo detendría: solo mentiría sobre su estado.
+      expect(await ctx.prisma.outboxMessage.count({ where: { status: OutboxStatus.SENT } })).toBe(
+        1,
+      );
+      expect(
+        await ctx.prisma.outboxMessage.count({ where: { status: OutboxStatus.SENDING } }),
+      ).toBe(1);
+    });
+
+    it('no toca los envíos de otras personas', async () => {
+      const location = await createLocation(ctx.prisma);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+
+      await outbox.enqueue(MessageBuilder.text(ana.phoneE164, 'Para Ana'), {
+        participantId: ana.id,
+      });
+      await outbox.enqueue(MessageBuilder.text(beto.phoneE164, 'Para Beto'), {
+        participantId: beto.id,
+      });
+
+      expect(await outbox.cancelPendingFor(ana.id, 'cambio de teléfono')).toBe(1);
+
+      const deBeto = await ctx.prisma.outboxMessage.findFirstOrThrow({
+        where: { participantId: beto.id },
+      });
+      expect(deBeto.status).toBe(OutboxStatus.PENDING);
+    });
+  });
+
   it('respeta la fecha de primer intento', async () => {
     await outbox.enqueue(MessageBuilder.text('+525512345678', 'Después'), {
       notBefore: new Date(Date.now() + 3_600_000),

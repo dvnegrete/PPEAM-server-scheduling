@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { OutboxKind, Prisma } from '@prisma/client';
+import { OutboxKind, OutboxStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { OutgoingMessage } from './types/message.types';
 
@@ -55,6 +55,44 @@ export class OutboxService {
     }
 
     await client.outboxMessage.create({ data });
+  }
+
+  /**
+   * Cancela los envíos que todavía no han salido hacia alguien.
+   *
+   * Hace falta al cambiar un teléfono: `enqueue` congela el destinatario en la
+   * columna `toPhone` **y dentro del `payload`**, y el worker manda ese payload
+   * sin releer nada, así que todo lo pendiente se entregaría al número viejo.
+   *
+   * Las filas en `SENDING` no se tocan: ya están en vuelo y cancelarlas no
+   * detendría el envío, solo mentiría sobre su estado.
+   *
+   * La llave de idempotencia se libera con un sufijo, y esa es la parte que no
+   * es obvia: `enqueue` hace `upsert` con `update: {}`, de modo que una llave
+   * ocupada por una fila cancelada bloquearía el reenvío para siempre. Al
+   * liberarla, el flujo normal —recordatorios, difusiones— vuelve a encolar el
+   * mismo aviso y esta vez con el número nuevo.
+   */
+  async cancelPendingFor(participantId: string, motivo: string): Promise<number> {
+    const pendientes = await this.prisma.outboxMessage.findMany({
+      where: { participantId, status: OutboxStatus.PENDING },
+      select: { id: true, dedupeKey: true },
+    });
+    if (pendientes.length === 0) return 0;
+
+    for (const mensaje of pendientes) {
+      await this.prisma.outboxMessage.update({
+        where: { id: mensaje.id },
+        data: {
+          status: OutboxStatus.CANCELLED,
+          error: motivo,
+          dedupeKey: mensaje.dedupeKey ? `${mensaje.dedupeKey}:cancelado:${mensaje.id}` : null,
+        },
+      });
+    }
+
+    this.logger.log(`Cancelados ${pendientes.length} envíos pendientes: ${motivo}`);
+    return pendientes.length;
   }
 
   /** Encola el mismo contenido para varios destinatarios (difusión de vacantes). */
