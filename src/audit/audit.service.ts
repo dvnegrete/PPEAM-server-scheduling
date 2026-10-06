@@ -26,6 +26,15 @@ export const AUDIT_ACTIONS = {
   SUPERVISOR_UNAVAILABLE: 'supervisor.unavailable',
   PARTICIPANT_CREATED: 'participant.created',
   PARTICIPANT_UPDATED: 'participant.updated',
+  /**
+   * El cambio de número tiene su propia acción porque es el que más cosas
+   * arrastra —la ventana de servicio, los envíos pendientes, la identidad en
+   * WhatsApp— y mezclado en `participant.updated` no se distinguiría de un
+   * cambio de congregación al revisar los reportes.
+   */
+  PARTICIPANT_PHONE_CHANGED: 'participant.phone_changed',
+  /** Pausa o baja: conviene poder listar quién dejó de participar y cuándo. */
+  PARTICIPANT_STATUS_CHANGED: 'participant.status_changed',
   PARTICIPANT_OPTED_IN: 'participant.opted_in',
   SPOUSE_LINKED: 'participant.spouse_linked',
   SPOUSE_UNLINKED: 'participant.spouse_unlinked',
