@@ -200,6 +200,55 @@ describe('Importación desde CSV (integración)', () => {
       expect(duracion).toBeLessThan(15_000);
     });
 
+    it('importa 250 asignaciones fijas con un puñado de consultas', async () => {
+      // Dos franjas por persona, que es lo realista. Antes cada fila hacía cinco
+      // viajes a la base, así que un archivo así sumaba más de mil: contra una
+      // base remota el proxy cortaba la petición antes de terminar.
+      const plantillas = [];
+      for (let dia = 1; dia <= 5; dia += 1) {
+        for (const hora of [7, 9, 11, 13, 15]) {
+          plantillas.push(
+            await ctx.prisma.shiftTemplate.create({
+              data: {
+                locationId,
+                weekday: dia,
+                startMinute: hora * 60,
+                endMinute: (hora + 2) * 60,
+                capacity: 25,
+                weekOfMonth: 0,
+              },
+            }),
+          );
+        }
+      }
+
+      const padron = ['nombre,apellido_paterno,telefono'];
+      for (let i = 0; i < 125; i += 1) {
+        padron.push(`Persona${i},Apellido${i},55${String(10000000 + i).padStart(8, '0')}`);
+      }
+      await importer.importParticipants(padron.join('\n'), { locationId });
+
+      const dias = ['domingo', 'lunes', 'martes', 'miercoles', 'jueves', 'viernes', 'sabado'];
+      const filas = ['telefono,dia,inicio,semana'];
+      for (let i = 0; i < 125; i += 1) {
+        const telefono = `55${String(10000000 + i).padStart(8, '0')}`;
+        for (const k of [0, 1]) {
+          const plantilla = plantillas[(i * 2 + k) % plantillas.length];
+          const hora = Math.floor(plantilla.startMinute / 60);
+          filas.push(`${telefono},${dias[plantilla.weekday]},${hora}:00,`);
+        }
+      }
+
+      const inicio = Date.now();
+      const result = await importer.importRecurringAssignments(filas.join('\n'), { locationId });
+      const duracion = Date.now() - inicio;
+
+      expect(result.created).toBe(250);
+      expect(result.errors).toHaveLength(0);
+      expect(await ctx.prisma.recurringAssignment.count()).toBe(250);
+      expect(duracion).toBeLessThan(15_000);
+    });
+
     it('sigue alineando las grafías dentro del archivo, ahora en memoria', async () => {
       const csv = [
         'nombre,apellido_paterno,telefono,ciudad',

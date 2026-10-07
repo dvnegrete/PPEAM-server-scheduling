@@ -20,6 +20,24 @@ import {
 } from './import.types';
 
 /** Fila ya validada, lista para escribirse en lote. */
+/** Fila de asignaciones ya validada en su formato, antes de tocar la base. */
+interface FilaAsignacion {
+  rowNumber: number;
+  phoneE164: string;
+  weekday: number;
+  startMinute: number;
+  weekOfMonth: number;
+  /** Como venían en el archivo, para que el mensaje de error cite lo escrito. */
+  dayRaw: string;
+  startRaw: string;
+  data: Record<string, string>;
+}
+
+/** Identidad de una franja: es la misma llave que el índice único de la tabla. */
+function franjaKey(franja: { weekday: number; startMinute: number; weekOfMonth: number }): string {
+  return `${franja.weekday}:${franja.startMinute}:${franja.weekOfMonth}`;
+}
+
 interface FilaValidada {
   phoneE164: string;
   datos: {
@@ -512,6 +530,11 @@ export class CsvImportService {
   async importRecurringAssignments(csv: string, options: ImportOptions): Promise<ImportResult> {
     const result = emptyResult(options.dryRun ?? false);
     const rows = this.parseCsv(csv, result, ASSIGNMENT_COLUMNS);
+    if (rows.length === 0) return result;
+
+    // Primero se lee y valida el formato de todo el archivo sin tocar la base:
+    // lo que está mal escrito no necesita ninguna consulta para saberse mal.
+    const leidas: FilaAsignacion[] = [];
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
@@ -566,87 +589,159 @@ export class CsvImportService {
         continue;
       }
 
-      const participant = await this.prisma.participant.findFirst({
-        where: { phoneE164: { in: this.phone.lookupVariants(phoneE164) } },
+      leidas.push({
+        rowNumber,
+        phoneE164,
+        weekday,
+        startMinute,
+        weekOfMonth,
+        dayRaw,
+        startRaw,
+        data: row,
       });
-      if (!participant) {
-        result.errors.push({
-          row: rowNumber,
-          message: `No hay ningún participante con el teléfono ${rawPhone}. Impórtalo primero`,
-          label: rowLabel(row),
-          data: row,
-        });
-        continue;
-      }
+    }
 
-      const template = await this.prisma.shiftTemplate.findUnique({
-        where: {
-          locationId_weekday_startMinute_weekOfMonth: {
-            locationId: options.locationId,
-            weekday,
-            startMinute,
-            weekOfMonth,
-          },
-        },
-      });
-      if (!template) {
-        result.errors.push({
-          row: rowNumber,
-          message: `No existe un turno de ${dayRaw} a las ${startRaw}${weekOfMonth ? ` (semana ${weekOfMonth})` : ''}`,
-          label: rowLabel(row),
-          data: row,
-        });
-        continue;
-      }
-
-      const existing = await this.prisma.recurringAssignment.findUnique({
-        where: {
-          shiftTemplateId_participantId: {
-            shiftTemplateId: template.id,
-            participantId: participant.id,
-          },
-        },
-      });
-
-      if (options.dryRun) {
-        if (existing) result.updated += 1;
-        else result.created += 1;
-        continue;
-      }
-
-      // Comprobación de cupo: sentar más titulares que lugares deja el turno
-      // permanentemente lleno y sin espacio para coberturas.
-      const current = await this.prisma.recurringAssignment.count({
-        where: { shiftTemplateId: template.id, active: true },
-      });
-      if (!existing && current >= template.capacity) {
-        result.errors.push({
-          row: rowNumber,
-          message:
-            `El turno de ${dayRaw} a las ${startRaw} ya tiene ${current} titulares ` +
-            `para ${template.capacity} lugares`,
-          label: rowLabel(row),
-          data: row,
-        });
-        continue;
-      }
-
-      if (existing) {
-        await this.prisma.recurringAssignment.update({
-          where: { id: existing.id },
-          data: { active: true },
-        });
-        result.updated += 1;
-      } else {
-        await this.prisma.recurringAssignment.create({
-          data: { shiftTemplateId: template.id, participantId: participant.id },
-        });
-        result.created += 1;
-      }
+    if (leidas.length > 0) {
+      await this.writeRecurringAssignments(leidas, result, options);
     }
 
     await this.recordAudit('recurring-assignments', result, options);
     return result;
+  }
+
+  /**
+   * Resuelve y escribe las asignaciones leídas con un puñado de consultas.
+   *
+   * Antes cada fila hacía cinco viajes a la base —buscar a la persona, buscar la
+   * franja, buscar la asignación previa, contar titulares y escribir—, así que un
+   * archivo con dos franjas por participante sumaba más de mil viajes. Contra una
+   * base remota eso tardaba más de dos minutos y el proxy cortaba la petición: el
+   * navegador veía un error aunque el servidor siguiera trabajando. Es el mismo
+   * problema que tuvo la importación del padrón, y se resuelve igual: se precarga
+   * lo que hace falta de una vez y se resuelve en memoria.
+   */
+  private async writeRecurringAssignments(
+    leidas: FilaAsignacion[],
+    result: ImportResult,
+    options: ImportOptions,
+  ): Promise<void> {
+    const variantes = [
+      ...new Set(leidas.flatMap((fila) => this.phone.lookupVariants(fila.phoneE164))),
+    ];
+
+    const [personas, plantillas] = await Promise.all([
+      this.prisma.participant.findMany({
+        where: { phoneE164: { in: variantes } },
+        select: { id: true, phoneE164: true },
+      }),
+      this.prisma.shiftTemplate.findMany({
+        where: { locationId: options.locationId, active: true },
+        select: { id: true, weekday: true, startMinute: true, weekOfMonth: true, capacity: true },
+      }),
+    ]);
+
+    const porTelefono = new Map<string, string>();
+    for (const persona of personas) {
+      for (const variante of this.phone.lookupVariants(persona.phoneE164)) {
+        porTelefono.set(variante, persona.id);
+      }
+    }
+
+    const porFranja = new Map(plantillas.map((plantilla) => [franjaKey(plantilla), plantilla]));
+
+    const previas = await this.prisma.recurringAssignment.findMany({
+      where: { shiftTemplateId: { in: plantillas.map((plantilla) => plantilla.id) } },
+      select: { id: true, shiftTemplateId: true, participantId: true, active: true },
+    });
+
+    const porPareja = new Map(
+      previas.map((previa) => [`${previa.shiftTemplateId}:${previa.participantId}`, previa]),
+    );
+
+    // Titulares que ya ocupan lugar, para comprobar el cupo sin volver a contar
+    // en la base por cada fila.
+    const titulares = new Map<string, number>();
+    for (const previa of previas) {
+      if (!previa.active) continue;
+      titulares.set(previa.shiftTemplateId, (titulares.get(previa.shiftTemplateId) ?? 0) + 1);
+    }
+
+    const aCrear: Array<{ shiftTemplateId: string; participantId: string }> = [];
+    const aReactivar: string[] = [];
+    // Parejas que esta corrida deja activas, para que una fila repetida dentro
+    // del mismo archivo cuente como actualización y no duplique.
+    const resueltas = new Set<string>();
+
+    for (const fila of leidas) {
+      const participantId = porTelefono.get(fila.phoneE164);
+      if (!participantId) {
+        result.errors.push({
+          row: fila.rowNumber,
+          message: `No hay ningún participante con el teléfono ${fila.phoneE164}. Impórtalo primero`,
+          label: rowLabel(fila.data),
+          data: fila.data,
+        });
+        continue;
+      }
+
+      const plantilla = porFranja.get(franjaKey(fila));
+      if (!plantilla) {
+        result.errors.push({
+          row: fila.rowNumber,
+          message:
+            `No existe un turno de ${fila.dayRaw} a las ${fila.startRaw}` +
+            `${fila.weekOfMonth ? ` (semana ${fila.weekOfMonth})` : ''}`,
+          label: rowLabel(fila.data),
+          data: fila.data,
+        });
+        continue;
+      }
+
+      const pareja = `${plantilla.id}:${participantId}`;
+      const previa = porPareja.get(pareja);
+
+      // Una fila que repite lo que ya existe —o lo que otra fila del mismo
+      // archivo acaba de resolver— es una actualización, no un duplicado.
+      if (previa || resueltas.has(pareja)) {
+        result.updated += 1;
+        if (previa && !previa.active && !aReactivar.includes(previa.id)) {
+          aReactivar.push(previa.id);
+          titulares.set(plantilla.id, (titulares.get(plantilla.id) ?? 0) + 1);
+        }
+        resueltas.add(pareja);
+        continue;
+      }
+
+      const ocupados = titulares.get(plantilla.id) ?? 0;
+      if (ocupados >= plantilla.capacity) {
+        result.errors.push({
+          row: fila.rowNumber,
+          message:
+            `El turno de ${fila.dayRaw} a las ${fila.startRaw} ya tiene ${ocupados} titulares ` +
+            `para ${plantilla.capacity} lugares`,
+          label: rowLabel(fila.data),
+          data: fila.data,
+        });
+        continue;
+      }
+
+      aCrear.push({ shiftTemplateId: plantilla.id, participantId });
+      titulares.set(plantilla.id, ocupados + 1);
+      resueltas.add(pareja);
+      result.created += 1;
+    }
+
+    if (result.dryRun) return;
+
+    if (aCrear.length > 0) {
+      await this.prisma.recurringAssignment.createMany({ data: aCrear, skipDuplicates: true });
+    }
+    if (aReactivar.length > 0) {
+      await this.prisma.recurringAssignment.updateMany({
+        where: { id: { in: aReactivar } },
+        data: { active: true },
+      });
+    }
   }
 
   /**
