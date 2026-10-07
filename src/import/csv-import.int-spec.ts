@@ -1,4 +1,4 @@
-import { ParticipantRole, ParticipantStatus } from '@prisma/client';
+import { MaritalStatus, ParticipantRole, ParticipantStatus } from '@prisma/client';
 import { createLocation, createParticipant } from '../../test/helpers/fixtures';
 import { createTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { CsvImportService } from './csv-import.service';
@@ -426,6 +426,64 @@ describe('Importación desde CSV (integración)', () => {
       expect(await ctx.prisma.participant.count()).toBe(1);
       const actualizada = await ctx.prisma.participant.findFirstOrThrow();
       expect(actualizada.paternalSurname).toBe('Nueva');
+    });
+
+    it('acepta las variantes de rol y estado civil que no son la forma canónica', async () => {
+      // El mensaje de error y la guía del panel tienen que nombrarlas: si el
+      // sistema las acepta pero nadie lo sabe, alguien edita su hoja a mano
+      // creyendo que van a fallar.
+      const csv = [
+        'nombre,apellido_paterno,telefono,rol,estado_civil',
+        'Ana,López,5512345678,encargada,divorciada',
+        'Beto,Ruiz,5512345679,administrador,divorciado',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.errors).toHaveLength(0);
+      const personas = await ctx.prisma.participant.findMany({
+        include: { memberships: true },
+        orderBy: { firstName: 'asc' },
+      });
+      expect(personas[0].memberships[0].role).toBe(ParticipantRole.SUPERVISOR);
+      expect(personas[1].memberships[0].role).toBe(ParticipantRole.ADMIN);
+      // «divorciado» no es un estado propio del modelo: se guarda como separado.
+      expect(personas.map((p) => p.maritalStatus)).toEqual([
+        MaritalStatus.SEPARADO,
+        MaritalStatus.SEPARADO,
+      ]);
+    });
+
+    it('al rechazar un valor, el mensaje nombra todas las variantes aceptadas', async () => {
+      const rol = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,rol\nAna,López,5512345678,jefa',
+        { locationId },
+      );
+      expect(rol.errors[0].message).toContain('encargada');
+      expect(rol.errors[0].message).toContain('administrador');
+
+      const civil = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,estado_civil\nAna,López,5512345678,comprometida',
+        { locationId },
+      );
+      expect(civil.errors[0].message).toContain('divorciado');
+    });
+
+    it('al actualizar, las columnas obligatorias siguen haciendo falta', async () => {
+      // La guía del panel afirmaba que una columna ausente no cambia nada, y
+      // eso solo vale para las opcionales: sin nombre la fila se rechaza aunque
+      // la persona ya exista.
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importParticipants('telefono,ciudad\n5512345678,Toluca', {
+        locationId,
+      });
+
+      expect(result.created).toBe(0);
+      expect(result.updated).toBe(0);
+      expect(result.errors[0].message).toBe('Falta el nombre');
     });
 
     it('rechaza un rol desconocido en vez de asumir uno', async () => {
@@ -877,6 +935,68 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.updated).toBe(1);
       expect(result.errors).toHaveLength(0);
       expect(await ctx.prisma.recurringAssignment.count()).toBe(1);
+    });
+
+    it('dice de quién es la fila fallida, no solo su teléfono', async () => {
+      // Con cientos de filas, un teléfono suelto obliga a buscar a quién
+      // pertenece antes de poder corregir nada. El padrón ya está precargado,
+      // así que el nombre no cuesta una consulta extra.
+      await importer.importParticipants(
+        'nombre,apellido_paterno,apellido_materno,telefono\nAna,López,Pérez,5512345678',
+        { locationId },
+      );
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,7:00',
+        { locationId },
+      );
+
+      // No hay plantilla de lunes a las 7, así que la fila falla con nombre.
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0].label).toBe('López Pérez, Ana · 5512345678');
+    });
+
+    it('cuando el teléfono no está en el padrón, cita el número como se escribió', async () => {
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n55 1234 5678,lunes,7:00',
+        { locationId },
+      );
+
+      expect(result.errors[0].message).toContain('55 1234 5678');
+      expect(result.errors[0].label).toBe('55 1234 5678');
+    });
+
+    it('acepta la hora sin minutos y con cero a la izquierda', async () => {
+      await plantillaLunes();
+      await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId,
+          weekday: 1,
+          startMinute: 11 * 60 + 30,
+          endMinute: 13 * 60 + 30,
+          capacity: 3,
+          weekOfMonth: 0,
+        },
+      });
+      await importer.importParticipants(
+        'nombre,apellido_paterno,telefono\nAna,López,5512345678\nBeto,Ruiz,5512345679',
+        { locationId },
+      );
+
+      const result = await importer.importRecurringAssignments(
+        ['telefono,dia,inicio', '5512345678,lunes,7', '5512345679,lunes,07:00'].join('\n'),
+        { locationId },
+      );
+      expect(result.created).toBe(2);
+      expect(result.errors).toHaveLength(0);
+
+      // Y los minutos no se pierden por el camino.
+      const media = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,11:30',
+        { locationId },
+      );
+      expect(media.created).toBe(1);
+      expect(media.errors).toHaveLength(0);
     });
 
     it('acepta los días con y sin acento', async () => {

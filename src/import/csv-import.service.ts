@@ -6,6 +6,7 @@ import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { OrganizationFieldsService } from '../participants/organization-fields.service';
 import { ParticipantsService } from '../participants/participants.service';
+import { formalName } from '../common/names/person-name';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   ASSIGNMENT_COLUMNS,
@@ -24,6 +25,8 @@ import {
 interface FilaAsignacion {
   rowNumber: number;
   phoneE164: string;
+  /** Tal como venía en el archivo, para que la etiqueta cite lo escrito. */
+  rawPhone: string;
   weekday: number;
   startMinute: number;
   weekOfMonth: number;
@@ -190,7 +193,9 @@ export class CsvImportService {
       if (roleRaw && !ROLE_BY_NAME[roleRaw]) {
         result.errors.push({
           row: rowNumber,
-          message: `Rol desconocido "${roleRaw}". Usa participante, encargado o admin`,
+          message:
+            `Rol desconocido "${roleRaw}". Usa participante, encargado o encargada, ` +
+            `o admin o administrador`,
           label: rowLabel(row),
           data: row,
         });
@@ -225,7 +230,9 @@ export class CsvImportService {
       if (civilRaw && !MARITAL_BY_NAME[civilRaw]) {
         result.errors.push({
           row: rowNumber,
-          message: `Estado civil desconocido "${civilRaw}". Usa soltero, casado, viudo o separado`,
+          message:
+            `Estado civil desconocido "${civilRaw}". Usa soltero, casado, viudo, separado o ` +
+            `divorciado, en masculino o femenino`,
           label: rowLabel(row),
           data: row,
         });
@@ -592,6 +599,7 @@ export class CsvImportService {
       leidas.push({
         rowNumber,
         phoneE164,
+        rawPhone,
         weekday,
         startMinute,
         weekOfMonth,
@@ -632,7 +640,16 @@ export class CsvImportService {
     const [personas, plantillas] = await Promise.all([
       this.prisma.participant.findMany({
         where: { phoneE164: { in: variantes } },
-        select: { id: true, phoneE164: true },
+        select: {
+          id: true,
+          phoneE164: true,
+          // El nombre no se usa para resolver nada: es para que un error diga de
+          // quién es la fila. En un archivo de cientos de renglones, un teléfono
+          // suelto obliga a buscar a quién pertenece antes de poder corregirlo.
+          firstName: true,
+          paternalSurname: true,
+          maternalSurname: true,
+        },
       }),
       this.prisma.shiftTemplate.findMany({
         where: { locationId: options.locationId, active: true },
@@ -640,12 +657,18 @@ export class CsvImportService {
       }),
     ]);
 
-    const porTelefono = new Map<string, string>();
+    const porTelefono = new Map<string, (typeof personas)[number]>();
     for (const persona of personas) {
       for (const variante of this.phone.lookupVariants(persona.phoneE164)) {
-        porTelefono.set(variante, persona.id);
+        porTelefono.set(variante, persona);
       }
     }
+
+    /** Quién es esa fila: «López Pérez, Ana · 55 1234 5678». */
+    const etiqueta = (fila: FilaAsignacion): string => {
+      const persona = porTelefono.get(fila.phoneE164);
+      return persona ? `${formalName(persona)} · ${fila.rawPhone}` : rowLabel(fila.data);
+    };
 
     const porFranja = new Map(plantillas.map((plantilla) => [franjaKey(plantilla), plantilla]));
 
@@ -673,16 +696,17 @@ export class CsvImportService {
     const resueltas = new Set<string>();
 
     for (const fila of leidas) {
-      const participantId = porTelefono.get(fila.phoneE164);
-      if (!participantId) {
+      const persona = porTelefono.get(fila.phoneE164);
+      if (!persona) {
         result.errors.push({
           row: fila.rowNumber,
-          message: `No hay ningún participante con el teléfono ${fila.phoneE164}. Impórtalo primero`,
+          message: `No hay ningún participante con el teléfono ${fila.rawPhone}. Impórtalo primero`,
           label: rowLabel(fila.data),
           data: fila.data,
         });
         continue;
       }
+      const participantId = persona.id;
 
       const plantilla = porFranja.get(franjaKey(fila));
       if (!plantilla) {
@@ -691,7 +715,7 @@ export class CsvImportService {
           message:
             `No existe un turno de ${fila.dayRaw} a las ${fila.startRaw}` +
             `${fila.weekOfMonth ? ` (semana ${fila.weekOfMonth})` : ''}`,
-          label: rowLabel(fila.data),
+          label: etiqueta(fila),
           data: fila.data,
         });
         continue;
@@ -719,7 +743,7 @@ export class CsvImportService {
           message:
             `El turno de ${fila.dayRaw} a las ${fila.startRaw} ya tiene ${ocupados} titulares ` +
             `para ${plantilla.capacity} lugares`,
-          label: rowLabel(fila.data),
+          label: etiqueta(fila),
           data: fila.data,
         });
         continue;
