@@ -447,10 +447,11 @@ describe('Importación desde CSV (integración)', () => {
       });
       expect(personas[0].memberships[0].role).toBe(ParticipantRole.SUPERVISOR);
       expect(personas[1].memberships[0].role).toBe(ParticipantRole.ADMIN);
-      // «divorciado» no es un estado propio del modelo: se guarda como separado.
+      // Divorciado es un estado propio: separado es una situación de hecho y
+      // divorciado un estado legal, y quien lo declara distingue entre los dos.
       expect(personas.map((p) => p.maritalStatus)).toEqual([
-        MaritalStatus.SEPARADO,
-        MaritalStatus.SEPARADO,
+        MaritalStatus.DIVORCIADO,
+        MaritalStatus.DIVORCIADO,
       ]);
     });
 
@@ -693,6 +694,7 @@ describe('Importación desde CSV (integración)', () => {
         'Beto,Ruiz,5512345679,soltero',
         'Carla,Díaz,5512345670,viuda',
         'Dora,Sosa,5512345671,separada',
+        'Elia,Nava,5512345673,divorciada',
         'Elsa,Vega,5512345672,',
       ].join('\n');
 
@@ -708,6 +710,7 @@ describe('Importación desde CSV (integración)', () => {
         { firstName: 'Beto', maritalStatus: 'SOLTERO' },
         { firstName: 'Carla', maritalStatus: 'VIUDO' },
         { firstName: 'Dora', maritalStatus: 'SEPARADO' },
+        { firstName: 'Elia', maritalStatus: 'DIVORCIADO' },
         // Columna vacía: queda sin registrar, no como soltera.
         { firstName: 'Elsa', maritalStatus: 'SIN_REGISTRAR' },
       ]);

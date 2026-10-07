@@ -151,10 +151,10 @@ export class UpdateParticipantDto {
   city?: string | null;
 
   @IsOptional()
-  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO'], {
+  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO', 'DIVORCIADO'], {
     message: 'Estado civil no válido',
   })
-  maritalStatus?: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO';
+  maritalStatus?: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO' | 'DIVORCIADO';
 
   /** Cónyuge que también es participante. Excluyente con `spouseName`. */
   @IsOptional()
@@ -216,10 +216,10 @@ export class AssignParticipantDto {
 }
 
 export class UpdateMaritalDto {
-  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO'], {
+  @IsIn(['SIN_REGISTRAR', 'SOLTERO', 'CASADO', 'VIUDO', 'SEPARADO', 'DIVORCIADO'], {
     message: 'Estado civil no válido',
   })
-  maritalStatus!: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO';
+  maritalStatus!: 'SIN_REGISTRAR' | 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO' | 'DIVORCIADO';
 
   /** Cónyuge que también es participante. Excluyente con `spouseName`. */
   @IsOptional()

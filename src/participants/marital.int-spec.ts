@@ -288,12 +288,13 @@ describe('Estado civil y cónyuge (integración)', () => {
       expect(betoFinal.spouseId).toBeNull();
     });
 
-    it('registra los cuatro estados civiles', async () => {
+    it('registra los cinco estados civiles', async () => {
       for (const estado of [
         MaritalStatus.SOLTERO,
         MaritalStatus.CASADO,
         MaritalStatus.VIUDO,
         MaritalStatus.SEPARADO,
+        MaritalStatus.DIVORCIADO,
       ]) {
         const persona = await createParticipant(ctx.prisma, locationId, `Persona ${estado}`);
         await participantes.updateMarital({

@@ -124,7 +124,10 @@ export const ASSIGNMENT_COLUMNS = [
 ] as const;
 
 /** Estados civiles aceptados en el CSV, con sus variantes de género. */
-export const MARITAL_BY_NAME: Record<string, 'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO'> = {
+export const MARITAL_BY_NAME: Record<
+  string,
+  'SOLTERO' | 'CASADO' | 'VIUDO' | 'SEPARADO' | 'DIVORCIADO'
+> = {
   soltero: 'SOLTERO',
   soltera: 'SOLTERO',
   casado: 'CASADO',
@@ -133,8 +136,10 @@ export const MARITAL_BY_NAME: Record<string, 'SOLTERO' | 'CASADO' | 'VIUDO' | 'S
   viuda: 'VIUDO',
   separado: 'SEPARADO',
   separada: 'SEPARADO',
-  divorciado: 'SEPARADO',
-  divorciada: 'SEPARADO',
+  // Separado y divorciado no son lo mismo: uno es una situación de hecho y el
+  // otro un estado legal, y quien lo declara distingue entre los dos.
+  divorciado: 'DIVORCIADO',
+  divorciada: 'DIVORCIADO',
 };
 
 /**

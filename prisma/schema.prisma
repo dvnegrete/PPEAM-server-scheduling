@@ -37,6 +37,7 @@ enum MaritalStatus {
   CASADO
   VIUDO
   SEPARADO
+  DIVORCIADO
 }
 
 enum ParticipantRole {
