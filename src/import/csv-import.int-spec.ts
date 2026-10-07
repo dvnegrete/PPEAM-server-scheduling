@@ -969,6 +969,98 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors[0].label).toBe('55 1234 5678');
     });
 
+    it('al escribir la hora en reloj de 12, dice cuál era la correcta', async () => {
+      // Es el error real que llevó a esto: la franja de la una de la tarde se
+      // capturó como «1:00», que el sistema lee como la una de la madrugada. Un
+      // «no existe ese turno» a secas no deja ver qué hay que cambiar.
+      await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId,
+          weekday: 1,
+          startMinute: 13 * 60,
+          endMinute: 15 * 60,
+          capacity: 3,
+          weekOfMonth: 0,
+        },
+      });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,1:00',
+        { locationId },
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.errors[0].message).toContain('reloj de 24 horas');
+      expect(result.errors[0].message).toContain('13:00');
+    });
+
+    it('cuando no es confusión de reloj, lista las horas que sí existen', async () => {
+      await plantillaLunes();
+      await ctx.prisma.shiftTemplate.create({
+        data: {
+          locationId,
+          weekday: 1,
+          startMinute: 9 * 60,
+          endMinute: 11 * 60,
+          capacity: 3,
+          weekOfMonth: 0,
+        },
+      });
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,8:00',
+        { locationId },
+      );
+
+      expect(result.errors[0].message).toContain('7:00, 9:00');
+    });
+
+    it('avisa cuando ese día no tiene ninguna franja', async () => {
+      await plantillaLunes();
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,jueves,7:00',
+        { locationId },
+      );
+
+      expect(result.errors[0].message).toContain('ninguna franja configurada');
+    });
+
+    it('la hora de la tarde en reloj de 24 sí entra', async () => {
+      for (const hora of [13, 15]) {
+        await ctx.prisma.shiftTemplate.create({
+          data: {
+            locationId,
+            weekday: 1,
+            startMinute: hora * 60,
+            endMinute: (hora + 2) * 60,
+            capacity: 3,
+            weekOfMonth: 0,
+          },
+        });
+      }
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const result = await importer.importRecurringAssignments(
+        'telefono,dia,inicio\n5512345678,lunes,13:00\n5512345678,lunes,15:00',
+        { locationId },
+      );
+
+      expect(result.created).toBe(2);
+      expect(result.errors).toHaveLength(0);
+    });
+
     it('acepta la hora sin minutos y con cero a la izquierda', async () => {
       await plantillaLunes();
       await ctx.prisma.shiftTemplate.create({

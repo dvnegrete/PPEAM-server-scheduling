@@ -672,6 +672,18 @@ export class CsvImportService {
 
     const porFranja = new Map(plantillas.map((plantilla) => [franjaKey(plantilla), plantilla]));
 
+    // Qué horas existen en cada día, para que un desajuste no acabe en un «no
+    // existe» a secas: con 75 plantillas, adivinar cuál era la buena es lo que
+    // convierte un archivo de trescientas filas en una tarde perdida.
+    const horasPorDia = new Map<string, number[]>();
+    for (const plantilla of plantillas) {
+      const clave = `${plantilla.weekday}:${plantilla.weekOfMonth}`;
+      const horas = horasPorDia.get(clave) ?? [];
+      horas.push(plantilla.startMinute);
+      horasPorDia.set(clave, horas);
+    }
+    for (const horas of horasPorDia.values()) horas.sort((a, b) => a - b);
+
     const previas = await this.prisma.recurringAssignment.findMany({
       where: { shiftTemplateId: { in: plantillas.map((plantilla) => plantilla.id) } },
       select: { id: true, shiftTemplateId: true, participantId: true, active: true },
@@ -712,9 +724,7 @@ export class CsvImportService {
       if (!plantilla) {
         result.errors.push({
           row: fila.rowNumber,
-          message:
-            `No existe un turno de ${fila.dayRaw} a las ${fila.startRaw}` +
-            `${fila.weekOfMonth ? ` (semana ${fila.weekOfMonth})` : ''}`,
+          message: this.explicarFranjaInexistente(fila, horasPorDia),
           label: etiqueta(fila),
           data: fila.data,
         });
@@ -831,6 +841,40 @@ export class CsvImportService {
   }
 
   /** Acepta "7:00", "7", "07:30". */
+  /**
+   * Por qué no existe esa franja, con la pista que hace falta para corregirla.
+   *
+   * El error frecuente es escribir la hora en reloj de 12: un turno de la una de
+   * la tarde se captura como `1:00`, que el sistema lee como la una de la
+   * madrugada. Decir solo «no existe un turno a las 1:00» deja a quien importa
+   * sin saber qué cambiar, así que se detecta ese caso y se nombra la hora buena.
+   */
+  private explicarFranjaInexistente(
+    fila: FilaAsignacion,
+    horasPorDia: Map<string, number[]>,
+  ): string {
+    const sufijoSemana = fila.weekOfMonth ? ` (semana ${fila.weekOfMonth})` : '';
+    const base = `No existe un turno de ${fila.dayRaw} a las ${fila.startRaw}${sufijoSemana}`;
+    const horas = horasPorDia.get(`${fila.weekday}:${fila.weekOfMonth}`) ?? [];
+
+    if (horas.length === 0) {
+      return `${base}. Ese día no tiene ninguna franja configurada${sufijoSemana ? '' : ' en el punto'}`;
+    }
+
+    // ¿Sería la franja de la tarde escrita en reloj de 12?
+    const porLaTarde = fila.startMinute + 12 * 60;
+    if (fila.startMinute < 12 * 60 && horas.includes(porLaTarde)) {
+      return (
+        `${base}. Las horas van en reloj de 24 horas: para la franja de las ` +
+        `${this.time.formatMinutes(porLaTarde)} escribe ` +
+        `«${this.time.formatMinutes(porLaTarde)}», no «${fila.startRaw}»`
+      );
+    }
+
+    const disponibles = horas.map((hora) => this.time.formatMinutes(hora)).join(', ');
+    return `${base}. Ese día las franjas empiezan a las: ${disponibles}`;
+  }
+
   private parseTime(value: string): number | null {
     const match = /^(\d{1,2})(?::(\d{2}))?$/.exec(value);
     if (!match) return null;
