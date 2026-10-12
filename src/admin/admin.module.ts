@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
+import { PhoneModule } from '../common/phone/phone.module';
 import { AppConfigService } from '../config/app-config.service';
 import { ImportModule } from '../import/import.module';
 import { ReportsModule } from '../reports/reports.module';
@@ -12,6 +13,9 @@ import { AdminAuthService } from './auth.service';
 @Module({
   imports: [
     ImportModule,
+    // Se declara aunque `PhoneModule` sea global: lo global solo aplica donde el
+    // módulo ya está en el grafo, y un contexto de prueba parcial no lo incluye.
+    PhoneModule,
     ReportsModule,
     SchedulingModule,
     SupervisorsModule,

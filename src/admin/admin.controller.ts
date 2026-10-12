@@ -15,6 +15,7 @@ import { SettingsService } from '../common/settings/settings.service';
 import { CsvImportService } from '../import/csv-import.service';
 import { ParticipantProfileService } from '../participants/participant-profile.service';
 import { ParticipantsService } from '../participants/participants.service';
+import { PhoneService } from '../common/phone/phone.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
@@ -64,6 +65,7 @@ export class AdminController {
     private readonly organization: OrganizationFieldsService,
     private readonly recurring: RecurringAssignmentsService,
     private readonly profiles: ParticipantProfileService,
+    private readonly phone: PhoneService,
   ) {}
 
   @Post('login')
@@ -442,8 +444,8 @@ export class AdminController {
   /** Quiénes pueden tomar ese turno, para el selector del tablero. */
   @Get('locations/:id/shifts/:shiftId/available-participants')
   @UseGuards(AdminAuthGuard)
-  availableParticipants(@Param('id') id: string, @Param('shiftId') shiftId: string) {
-    return this.prisma.participant.findMany({
+  async availableParticipants(@Param('id') id: string, @Param('shiftId') shiftId: string) {
+    const candidatos = await this.prisma.participant.findMany({
       where: {
         status: 'ACTIVE',
         memberships: { some: { locationId: id, active: true } },
@@ -460,9 +462,20 @@ export class AdminController {
         paternalSurname: true,
         maternalSurname: true,
         displayName: true,
+        phoneE164: true,
       },
       orderBy: [...PADRON_ORDER],
     });
+
+    // El teléfono va ya formateado. Quien se ofrece para cubrir lo hace desde su
+    // número, así que es el dato que el administrador tiene a mano para
+    // buscarlo; en E.164 crudo no se puede leer ni comparar de un vistazo. Se
+    // formatea aquí y no en el panel para no meter la librería de teléfonos en
+    // el paquete del navegador, y los dígitos sirven igual para buscar.
+    return candidatos.map(({ phoneE164, ...persona }) => ({
+      ...persona,
+      phone: this.phone.format(phoneE164),
+    }));
   }
 
   /** Movimientos de un turno, incluidas las personas que ya no figuran en él. */
