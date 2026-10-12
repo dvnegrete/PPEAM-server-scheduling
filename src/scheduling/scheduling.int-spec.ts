@@ -315,6 +315,89 @@ describe('Motor de turnos (integración)', () => {
         expect(enEseTurno[0].status).toBe(AssignmentStatus.CANCELLED);
       });
 
+      it('no avisa a nadie de que quedó sentado', async () => {
+        // Es la consecuencia que más conviene advertir antes de regenerar: la
+        // gente se enterará por el recordatorio del turno, que puede llegar con
+        // poca antelación si el turno es de los próximos días.
+        const { location, template } = await mesGenerado();
+        const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+        await ctx.prisma.recurringAssignment.create({
+          data: { shiftTemplateId: template.id, participantId: ana.id },
+        });
+
+        await generator.generateMonth(location.id, 2026, 9);
+
+        expect(await ctx.prisma.assignment.count({ where: { participantId: ana.id } })).toBe(5);
+        expect(await ctx.prisma.outboxMessage.count()).toBe(0);
+        expect(await ctx.prisma.supervisorTask.count()).toBe(0);
+      });
+
+      it('solo añade: a quien se le quitó el turno fijo sigue sentado', async () => {
+        // Regenerar no reconcilia el calendario con el rol de turnos fijos.
+        // Quitar a alguien exige hacerlo turno por turno desde el tablero.
+        const { location, template } = await mesGenerado();
+        const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+        const fija = await ctx.prisma.recurringAssignment.create({
+          data: { shiftTemplateId: template.id, participantId: ana.id },
+        });
+        await generator.generateMonth(location.id, 2026, 9);
+
+        await ctx.prisma.recurringAssignment.update({
+          where: { id: fija.id },
+          data: { active: false },
+        });
+        await generator.generateMonth(location.id, 2026, 9);
+
+        expect(
+          await ctx.prisma.assignment.count({
+            where: { participantId: ana.id, status: AssignmentStatus.ASSIGNED },
+          }),
+        ).toBe(5);
+      });
+
+      it('un cambio de cupo en la franja no llega a los turnos ya creados', async () => {
+        const { location, template } = await mesGenerado(2);
+
+        await ctx.prisma.shiftTemplate.update({
+          where: { id: template.id },
+          data: { capacity: 4 },
+        });
+        await generator.generateMonth(location.id, 2026, 9);
+
+        const cupos = await ctx.prisma.shift.findMany({
+          select: { capacity: true },
+          distinct: ['capacity'],
+        });
+        expect(cupos.map((turno) => turno.capacity)).toEqual([2]);
+      });
+
+      it('una franja agregada a mitad de mes crea turnos, incluso en días pasados', async () => {
+        // El reloj está a mitad de septiembre, así que los miércoles 2 y 9 ya
+        // pasaron. Conviene advertirlo: esos turnos nacen vacíos y ya no hay
+        // forma de cubrirlos.
+        const { location } = await mesGenerado();
+        ctx.time.setClock(() => new Date('2026-09-16T18:00:00.000Z'));
+
+        await ctx.prisma.shiftTemplate.create({
+          data: {
+            locationId: location.id,
+            weekday: 3,
+            startMinute: 15 * 60,
+            endMinute: 17 * 60,
+            capacity: 3,
+            weekOfMonth: 0,
+          },
+        });
+
+        const result = await generator.generateMonth(location.id, 2026, 9);
+
+        expect(result.shiftsCreated).toBe(5);
+        const enElPasado = await ctx.prisma.shift.count({
+          where: { startMinute: 15 * 60, startsAt: { lt: new Date('2026-09-16T18:00:00.000Z') } },
+        });
+        expect(enElPasado).toBe(2);
+      });
+
       it('respeta el cupo al completar', async () => {
         const { location, template } = await mesGenerado(2);
         const gente = [];
