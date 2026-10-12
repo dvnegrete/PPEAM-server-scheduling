@@ -6,7 +6,12 @@ export const TZ = 'America/Mexico_City';
 
 export async function createLocation(
   prisma: PrismaService,
-  overrides: Partial<{ minCapacity: number; defaultCapacity: number; settings: object }> = {},
+  overrides: Partial<{
+    minCapacity: number;
+    defaultCapacity: number;
+    maxCapacity: number;
+    settings: object;
+  }> = {},
 ) {
   return prisma.location.create({
     data: {
@@ -14,7 +19,7 @@ export async function createLocation(
       timezone: TZ,
       defaultCapacity: overrides.defaultCapacity ?? 3,
       minCapacity: overrides.minCapacity ?? 2,
-      maxCapacity: 4,
+      maxCapacity: overrides.maxCapacity ?? 4,
       // Un punto real nace con la mensajería restringida, que es la postura segura
       // mientras se opera con una cuenta de prueba de Meta. Para las pruebas que no
       // tratan sobre la política de entrega, ese modo silenciaría todo lo que

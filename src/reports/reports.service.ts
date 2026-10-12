@@ -76,7 +76,14 @@ export interface DashboardShift {
   status: ShiftStatus;
   capacity: number;
   occupied: number;
+  /** Lugares que faltan para la **meta** del turno; es lo que se convoca. */
   freeSlots: number;
+  /**
+   * Lugares extra que todavía admite por encima de la meta, hasta el tope del
+   * punto. Es una decisión del administrador, no una carencia: no se convoca
+   * para llenarlos y no afecta al color del turno.
+   */
+  extraSlots: number;
   need: NeedLevel;
   participants: Array<{
     assignmentId: string;
@@ -405,6 +412,13 @@ export class ReportsService {
         capacity: shift.capacity,
         occupied: ocupantes.length,
         freeSlots: Math.max(0, shift.capacity - ocupantes.length),
+        // Se mide desde la meta, no desde la ocupación: con 2 de 3 hay 1 lugar
+        // por convocar y 1 extra detrás, no 2 extra.
+        extraSlots: Math.max(
+          0,
+          Math.max(shift.capacity, location.maxCapacity) -
+            Math.max(ocupantes.length, shift.capacity),
+        ),
         need,
         participants: ocupantes.map((assignment) => ({
           assignmentId: assignment.id,

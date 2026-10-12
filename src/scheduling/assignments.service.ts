@@ -214,8 +214,18 @@ export class AssignmentsService {
       const occupied = await tx.assignment.count({
         where: { shiftId: shift.id, status: { in: OCCUPYING_STATUSES } },
       });
-      if (occupied >= shift.capacity) {
-        throw new BadRequestException('Ese turno ya está completo');
+
+      // El tope de admisión no es el cupo. `capacity` es la **meta**: manda en el
+      // color del turno, en el estado `FULL` y en a cuánta gente se convoca. El
+      // administrador puede sentar a alguien por encima de esa meta —un turno
+      // holgado no es un problema que haya que impedir— pero no más allá del tope
+      // del punto. Por eso el extra solo entra por aquí: la aprobación de
+      // coberturas por WhatsApp sigue midiendo contra `capacity`.
+      const tope = Math.max(shift.capacity, shift.location.maxCapacity);
+      if (occupied >= tope) {
+        throw new BadRequestException(
+          `Ese turno ya tiene ${occupied} persona(s), que es el máximo del punto`,
+        );
       }
 
       const existing = await tx.assignment.findUnique({

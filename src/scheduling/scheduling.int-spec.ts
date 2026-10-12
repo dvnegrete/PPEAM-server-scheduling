@@ -779,6 +779,24 @@ describe('Motor de turnos (integración)', () => {
       expect(await shifts.countOccupied(shift.id)).toBe(3);
     });
 
+    it('una cobertura no puede ocupar el lugar extra', async () => {
+      // El cuarto lugar es una decisión del administrador, no algo que se pueda
+      // tomar desde WhatsApp: la aprobación de coberturas sigue midiendo contra
+      // la meta del turno, aunque el punto admita una persona más.
+      const { request, dora, ana, encargado, shift } = await escenarioConVacante();
+
+      const ofertaDora = await coverage.offer(request.id, dora.id);
+      const ofertaAna = await coverage.offer(request.id, ana.id);
+
+      await coverage.approve(ofertaDora, encargado.id);
+      expect(await shifts.countOccupied(shift.id)).toBe(3);
+
+      // El turno ya alcanzó su meta: la segunda aprobación no entra, pese a que
+      // el tope del punto son cuatro.
+      await expect(coverage.approve(ofertaAna, encargado.id)).rejects.toThrow();
+      expect(await shifts.countOccupied(shift.id)).toBe(3);
+    });
+
     it('no acepta ofrecimientos después del plazo de cierre', async () => {
       const { request, dora } = await escenarioConVacante();
       await ctx.prisma.coverageRequest.update({
