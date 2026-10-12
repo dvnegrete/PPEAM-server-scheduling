@@ -107,6 +107,77 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors[0].message).toContain('punto y coma o tabuladores');
     });
 
+    it('ignora las columnas y las filas de relleno que agrega Excel', async () => {
+      // Excel guarda un renglón por cada línea de su «rango usado», y una
+      // columna por cada celda que alguna vez se tocó: el archivo llega con
+      // «telefono;dia;inicio;semana;;;;;;;» y líneas finales de solo «;;;;;».
+      const csv = [
+        'nombre;apellido_paterno;telefono;;;;;;;;;;',
+        'Ana;López;5512345678;;;;;;;;;;',
+        'Beto;Ruiz;5512345679;;;;;;;;;;',
+        ';;;;;;;;;;;;',
+        ';;;;;;;;;;;;',
+        ';;;;;;;;;;;;',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.created).toBe(2);
+      expect(result.processed).toBe(2);
+      expect(result.skipped).toBe(3);
+      // Lo que importa: ni un error inventado por el relleno.
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('el relleno no desplaza el número de fila de los errores', async () => {
+      // Si las filas vacías se quitaran antes de recorrer el archivo, el «fila 5»
+      // del informe no sería la línea 5 de la hoja y no habría forma de encontrarla.
+      const csv = [
+        'nombre;apellido_paterno;telefono',
+        'Ana;López;5512345678',
+        ';;',
+        'Beto;;5512345679',
+      ].join('\n');
+
+      const result = await importer.importParticipants(csv, { locationId });
+
+      expect(result.skipped).toBe(1);
+      expect(result.errors).toHaveLength(1);
+      // Beto está en la línea 4 del archivo, no en la 3.
+      expect(result.errors[0].row).toBe(4);
+      expect(result.errors[0].message).toContain('apellido paterno');
+    });
+
+    it('las asignaciones fijas también ignoran el relleno', async () => {
+      await plantillaLunes();
+      await importer.importParticipants('nombre,apellido_paterno,telefono\nAna,López,5512345678', {
+        locationId,
+      });
+
+      const csv = [
+        'telefono;dia;inicio;semana;;;;;;;;;;;;;;;;',
+        '5512345678;lunes;7:00;;;;;;;;;;;;;;;;;',
+        ';;;;;;;;;;;;;;;;;;;',
+        ';;;;;;;;;;;;;;;;;;;',
+      ].join('\n');
+
+      const result = await importer.importRecurringAssignments(csv, { locationId });
+
+      expect(result.created).toBe(1);
+      expect(result.skipped).toBe(2);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('avisa cuando el archivo trae solo relleno, sin ningún registro', async () => {
+      const result = await importer.importParticipants(
+        'nombre;apellido_paterno;telefono\n;;\n;;\n;;',
+        { locationId },
+      );
+
+      expect(result.created).toBe(0);
+      expect(result.errors[0].message).toContain('todas las filas están vacías');
+    });
+
     it('avisa cuando el archivo solo trae el encabezado', async () => {
       const result = await importer.importParticipants('nombre,apellido_paterno,telefono', {
         locationId,
@@ -171,11 +242,16 @@ describe('Importación desde CSV (integración)', () => {
       expect(result.errors[0].label).toBe('Ana López · 5512345678');
     });
 
-    it('no se queda sin etiqueta cuando la fila viene vacía de datos legibles', async () => {
-      const result = await importer.importParticipants('nombre,apellido_paterno,telefono\n,,', {
-        locationId,
-      });
+    it('no se queda sin etiqueta cuando la fila no trae nombre ni teléfono', async () => {
+      // Una fila con algún dato pero ninguno identificable: no es relleno —eso
+      // se salta— pero tampoco se puede nombrar a nadie en el informe.
+      const result = await importer.importParticipants(
+        'nombre,apellido_paterno,telefono,ciudad\n,,,Toluca',
+        { locationId },
+      );
 
+      expect(result.skipped).toBe(0);
+      expect(result.errors).toHaveLength(1);
       expect(result.errors[0].label).toBe('(fila sin datos legibles)');
     });
   });

@@ -36,6 +36,18 @@ interface FilaAsignacion {
   data: Record<string, string>;
 }
 
+/**
+ * Una fila sin un solo dato.
+ *
+ * Excel escribe un renglón por cada línea de su «rango usado», aunque esté
+ * vacío: un archivo de tres registros puede traer veinte líneas de solo
+ * «;;;;;». No son registros, y contarlas como tales llenaba el informe de
+ * errores inventados que tapaban los de verdad.
+ */
+function filaVacia(row: Record<string, string>): boolean {
+  return Object.values(row).every((valor) => (valor ?? '').trim() === '');
+}
+
 /** Identidad de una franja: es la misma llave que el índice único de la tabla. */
 function franjaKey(franja: { weekday: number; startMinute: number; weekOfMonth: number }): string {
   return `${franja.weekday}:${franja.startMinute}:${franja.weekOfMonth}`;
@@ -123,6 +135,10 @@ export class CsvImportService {
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
+      if (filaVacia(row)) {
+        result.skipped += 1;
+        continue;
+      }
       result.processed += 1;
       const firstName = (row.nombre ?? row.name ?? '').trim();
       const paternalSurname = (
@@ -545,6 +561,10 @@ export class CsvImportService {
 
     for (const [index, row] of rows.entries()) {
       const rowNumber = index + 2;
+      if (filaVacia(row)) {
+        result.skipped += 1;
+        continue;
+      }
       result.processed += 1;
 
       const rawPhone = (row.telefono ?? row.teléfono ?? row.phone ?? '').trim();
@@ -837,6 +857,20 @@ export class CsvImportService {
       return [];
     }
 
+    if (rows.every(filaVacia)) {
+      result.errors.push({
+        row: 1,
+        message:
+          'El archivo no trae ningún registro: todas las filas están vacías. ' +
+          'Revisa que los datos estén en la primera hoja del libro.',
+      });
+      return [];
+    }
+
+    // Las filas de relleno **no** se quitan aquí a propósito: el informe numera
+    // cada error por su posición en el archivo, y filtrarlas antes del recorrido
+    // desplazaría esos números y haría imposible encontrar la fila en la hoja.
+    // Cada importador las salta dentro de su bucle, donde el índice ya es firme.
     return rows;
   }
 
