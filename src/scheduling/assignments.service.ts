@@ -47,6 +47,16 @@ export interface CancelParams {
   notify?: boolean;
 }
 
+/** Resultado de una cancelación en pareja. */
+export interface CoupleCancelResult {
+  /**
+   * Nombre del cónyuge, si también se canceló; `null` si no había a quién.
+   * No se devuelve el nombre de quien se canceló directamente: el panel ya lo
+   * tiene, es lo que mostraba en el diálogo.
+   */
+  spouseCancelled: string | null;
+}
+
 @Injectable()
 export class AssignmentsService {
   private readonly logger = new Logger(AssignmentsService.name);
@@ -171,6 +181,75 @@ export class AssignmentsService {
       `${displayName(assignment.participant)} canceló ${shiftLabel}; quedan ${remaining} de ${assignment.shift.capacity}` +
         (urgent ? ' (urgente)' : ''),
     );
+  }
+
+  /**
+   * Cancela a alguien y, si se pide, también a su cónyuge **en ese mismo turno**.
+   *
+   * Los dos cónyuges atienden casi siempre la misma franja —por eso se capturó
+   * el vínculo—, así que cancelar a uno y tener que acordarse del otro era pedir
+   * que se olvidara. Cuando no van, no van los dos.
+   *
+   * El cónyuge se resuelve **aquí y no en el panel**. Si el panel mandara un
+   * `assignmentId`, una petición preparada a mano podría dar de baja a
+   * cualquiera: así solo se puede cancelar a quien de verdad es el cónyuge y de
+   * verdad tiene lugar en ese turno.
+   *
+   * No es una operación atómica, y es a propósito: `cancel()` hace su propia
+   * transacción, publica su evento y abre la vacante. Si la segunda falla, la
+   * primera ya está hecha y el administrador ve el turno con una baja y puede
+   * repetir; lo contrario —envolverlas y deshacer la primera— dejaría al grupo
+   * con un aviso de cobertura ya emitido por una baja revertida.
+   */
+  async cancelWithSpouse(params: CancelParams): Promise<CoupleCancelResult> {
+    const asignacion = await this.prisma.assignment.findUnique({
+      where: { id: params.assignmentId },
+      include: { participant: true },
+    });
+    if (!asignacion) {
+      throw new NotFoundException(`No existe la asignación ${params.assignmentId}`);
+    }
+
+    // El cónyuge se busca antes de cancelar: después, la baja ya no cambia el
+    // vínculo, pero leerlo antes deja claro sobre qué se decidió.
+    const conyuge = await this.spouseInSameShift(asignacion.participant, asignacion.shiftId);
+
+    await this.cancel(params);
+
+    if (!conyuge) return { spouseCancelled: null };
+
+    // El mismo motivo: una pareja que no puede ir suele no poder por lo mismo, y
+    // volver a preguntarlo sería capturar dos veces el mismo dato.
+    await this.cancel({ ...params, assignmentId: conyuge.assignmentId });
+
+    return { spouseCancelled: conyuge.name };
+  }
+
+  /**
+   * La asignación ocupante del cónyuge en ese turno, si la hay.
+   *
+   * Devuelve `null` cuando no está casado, cuando su cónyuge no es participante
+   * —solo está anotado su nombre—, cuando atiende otro turno, o cuando ya
+   * canceló ese día: en ninguno de esos casos hay nada que cancelar.
+   */
+  private async spouseInSameShift(
+    participant: { spouseId: string | null },
+    shiftId: string,
+  ): Promise<{ assignmentId: string; name: string } | null> {
+    if (!participant.spouseId) return null;
+
+    const asignacion = await this.prisma.assignment.findFirst({
+      where: {
+        shiftId,
+        participantId: participant.spouseId,
+        status: { in: OCCUPYING_STATUSES },
+      },
+      include: { participant: true },
+    });
+
+    return asignacion
+      ? { assignmentId: asignacion.id, name: displayName(asignacion.participant) }
+      : null;
   }
 
   /**

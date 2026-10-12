@@ -207,6 +207,17 @@ export class CancelAssignmentDto {
   @IsOptional()
   @IsString()
   reason?: string;
+
+  /**
+   * Cancelar también a su cónyuge en ese mismo turno.
+   *
+   * Se manda una bandera y no el `assignmentId` del cónyuge: el servidor
+   * resuelve el vínculo, así que no hay forma de dar de baja a un tercero con
+   * una petición preparada a mano.
+   */
+  @IsOptional()
+  @IsBoolean()
+  cancelSpouse?: boolean;
 }
 
 export class AssignParticipantDto {

@@ -2,9 +2,10 @@ import {
   ActorType,
   AssignmentOrigin,
   AssignmentStatus,
-  ParticipantStatus,
   CoverageOfferStatus,
   CoverageRequestStatus,
+  MaritalStatus,
+  ParticipantStatus,
   ShiftStatus,
 } from '@prisma/client';
 import { createLocation, createParticipant, createShift, TZ } from '../../test/helpers/fixtures';
@@ -652,6 +653,163 @@ describe('Motor de turnos (integración)', () => {
       await assignments.cancel({ assignmentId: assignment.id });
 
       expect(await ctx.prisma.coverageRequest.count()).toBe(1);
+    });
+
+    describe('en pareja', () => {
+      /** Ana y Beto, casados, los dos en el mismo turno; Carla también atiende. */
+      async function matrimonioEnElMismoTurno() {
+        const location = await createLocation(ctx.prisma, { minCapacity: 2 });
+        const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+        const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+        const carla = await createParticipant(ctx.prisma, location.id, 'Carla Díaz');
+        await ctx.prisma.participant.update({
+          where: { id: ana.id },
+          data: { maritalStatus: MaritalStatus.CASADO, spouseId: beto.id },
+        });
+        await ctx.prisma.participant.update({
+          where: { id: beto.id },
+          data: { maritalStatus: MaritalStatus.CASADO, spouseId: ana.id },
+        });
+        const shift = await createShift(ctx.prisma, location.id, {
+          startsAt: new Date('2026-08-30T13:00:00.000Z'),
+          participantIds: [ana.id, beto.id, carla.id],
+        });
+        const deAna = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: shift.id, participantId: ana.id },
+        });
+        return { location, shift, ana, beto, carla, deAna };
+      }
+
+      const admin = {
+        actorId: 'admin-1',
+        actorType: ActorType.ADMIN,
+        actorName: 'Elena Mora',
+        reasonCode: 'viaje',
+        reason: 'salen de la ciudad',
+      };
+
+      it('cancela a los dos con el mismo motivo', async () => {
+        const { shift, ana, beto, deAna } = await matrimonioEnElMismoTurno();
+
+        const resultado = await assignments.cancelWithSpouse({
+          assignmentId: deAna.id,
+          ...admin,
+        });
+
+        expect(resultado.spouseCancelled).toBe('Beto Ruiz');
+        const bajas = await ctx.prisma.assignment.findMany({
+          where: { shiftId: shift.id, status: AssignmentStatus.CANCELLED },
+        });
+        expect(bajas).toHaveLength(2);
+        expect(bajas.map((b) => b.participantId).sort()).toEqual([ana.id, beto.id].sort());
+        // El motivo no se vuelve a preguntar: se copia tal cual.
+        expect(bajas.every((b) => b.cancelReasonCode === 'viaje')).toBe(true);
+        expect(bajas.every((b) => b.cancelReason === 'salen de la ciudad')).toBe(true);
+        expect(bajas.every((b) => b.cancelledByName === 'Elena Mora')).toBe(true);
+      });
+
+      it('deja una sola vacante, pidiendo dos lugares', async () => {
+        // Dos bajas en el mismo turno no son dos convocatorias: es una sola
+        // vacante que ahora necesita dos personas.
+        const { shift, deAna } = await matrimonioEnElMismoTurno();
+
+        await assignments.cancelWithSpouse({ assignmentId: deAna.id, ...admin });
+
+        const vacantes = await ctx.prisma.coverageRequest.findMany({
+          where: { shiftId: shift.id },
+        });
+        expect(vacantes).toHaveLength(1);
+        expect(vacantes[0].slotsNeeded).toBe(2);
+      });
+
+      it('no toca al cónyuge si atiende otro turno', async () => {
+        const { location, ana, beto, deAna } = await matrimonioEnElMismoTurno();
+        // Beto sale de este turno y se sienta en otro.
+        await ctx.prisma.assignment.deleteMany({ where: { participantId: beto.id } });
+        const otro = await createShift(ctx.prisma, location.id, {
+          startsAt: new Date('2026-08-31T13:00:00.000Z'),
+          participantIds: [beto.id],
+        });
+
+        const resultado = await assignments.cancelWithSpouse({
+          assignmentId: deAna.id,
+          ...admin,
+        });
+
+        expect(resultado.spouseCancelled).toBeNull();
+        const suyo = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: otro.id, participantId: beto.id },
+        });
+        expect(suyo.status).toBe(AssignmentStatus.ASSIGNED);
+        expect(ana).toBeDefined();
+      });
+
+      it('no hace nada si el cónyuge ya había cancelado ese día', async () => {
+        const { shift, beto, deAna } = await matrimonioEnElMismoTurno();
+        const deBeto = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: shift.id, participantId: beto.id },
+        });
+        await assignments.cancel({ assignmentId: deBeto.id, reasonCode: 'otro' });
+
+        const resultado = await assignments.cancelWithSpouse({
+          assignmentId: deAna.id,
+          ...admin,
+        });
+
+        // No se vuelve a cancelar ni se cambia el motivo que ya tenía.
+        expect(resultado.spouseCancelled).toBeNull();
+        const suyo = await ctx.prisma.assignment.findUniqueOrThrow({ where: { id: deBeto.id } });
+        expect(suyo.cancelReasonCode).toBe('otro');
+      });
+
+      it('no hace nada si la persona no está casada', async () => {
+        const { shift, carla } = await matrimonioEnElMismoTurno();
+        const deCarla = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: shift.id, participantId: carla.id },
+        });
+
+        const resultado = await assignments.cancelWithSpouse({
+          assignmentId: deCarla.id,
+          ...admin,
+        });
+
+        expect(resultado.spouseCancelled).toBeNull();
+        expect(
+          await ctx.prisma.assignment.count({
+            where: { shiftId: shift.id, status: AssignmentStatus.CANCELLED },
+          }),
+        ).toBe(1);
+      });
+
+      it('no hace nada si su cónyuge no participa en los exhibidores', async () => {
+        // Casada con alguien de fuera: solo está anotado su nombre, no hay
+        // ningún turno que cancelar.
+        const location = await createLocation(ctx.prisma, { minCapacity: 2 });
+        const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+        const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+        await ctx.prisma.participant.update({
+          where: { id: ana.id },
+          data: { maritalStatus: MaritalStatus.CASADO, spouseName: 'Luis Ramírez' },
+        });
+        const shift = await createShift(ctx.prisma, location.id, {
+          startsAt: new Date('2026-08-30T13:00:00.000Z'),
+          participantIds: [ana.id, beto.id],
+        });
+        const deAna = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: shift.id, participantId: ana.id },
+        });
+
+        const resultado = await assignments.cancelWithSpouse({
+          assignmentId: deAna.id,
+          ...admin,
+        });
+
+        expect(resultado.spouseCancelled).toBeNull();
+        const beto2 = await ctx.prisma.assignment.findFirstOrThrow({
+          where: { shiftId: shift.id, participantId: beto.id },
+        });
+        expect(beto2.status).toBe(AssignmentStatus.ASSIGNED);
+      });
     });
 
     it('rechaza cancelar dos veces el mismo turno', async () => {

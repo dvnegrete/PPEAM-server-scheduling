@@ -300,6 +300,29 @@ describe('Tablero de administradores (integración)', () => {
       expect(turno.extraSlots).toBe(1);
     });
 
+    it('trae el vínculo matrimonial, para poder emparejar a los cónyuges del turno', async () => {
+      // Es lo que permite al panel ofrecer «cancelar también a su cónyuge» sin
+      // ninguna consulta extra: si los dos están en el turno, los dos vienen ya
+      // en esta misma lista.
+      const { location, gente } = await escenario(3);
+      await ctx.prisma.participant.update({
+        where: { id: gente[0].id },
+        data: { maritalStatus: 'CASADO', spouseId: gente[1].id },
+      });
+      await ctx.prisma.participant.update({
+        where: { id: gente[1].id },
+        data: { maritalStatus: 'CASADO', spouseId: gente[0].id },
+      });
+
+      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+        .shifts[0];
+      const primera = turno.participants.find((p) => p.participantId === gente[0].id)!;
+      const tercera = turno.participants.find((p) => p.participantId === gente[2].id)!;
+
+      expect(primera.spouseId).toBe(gente[1].id);
+      expect(tercera.spouseId).toBeNull();
+    });
+
     it('muestra quién cubre y quién canceló, con sus fechas y responsables', async () => {
       const { location, shift, gente } = await escenario(3);
       const asignacion = await ctx.prisma.assignment.findFirstOrThrow({

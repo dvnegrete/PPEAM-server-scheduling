@@ -89,6 +89,8 @@ export interface DashboardShift {
     assignmentId: string;
     participantId: string;
     name: string;
+    /** Cónyuge que también participa; sirve para emparejarlos dentro del turno. */
+    spouseId: string | null;
     origin: AssignmentOrigin;
     confirmed: boolean;
     assignedAt: string | null;
@@ -361,6 +363,10 @@ export class ReportsService {
                 paternalSurname: true,
                 maternalSurname: true,
                 displayName: true,
+                // Con esto el panel puede emparejar a los cónyuges que coinciden
+                // en un turno sin ninguna consulta extra: si los dos están, los
+                // dos vienen ya en esta misma lista.
+                spouseId: true,
               },
             },
           },
@@ -424,6 +430,7 @@ export class ReportsService {
           assignmentId: assignment.id,
           participantId: assignment.participant.id,
           name: displayName(assignment.participant),
+          spouseId: assignment.participant.spouseId,
           origin: assignment.origin,
           confirmed: assignment.status === AssignmentStatus.CONFIRMED,
           assignedAt: assignment.assignedAt?.toISOString() ?? null,

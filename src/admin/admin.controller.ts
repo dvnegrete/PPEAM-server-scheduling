@@ -399,15 +399,25 @@ export class AdminController {
     @Body() dto: CancelAssignmentDto,
     @CurrentAdmin() admin: AdminTokenPayload,
   ) {
-    await this.assignments.cancel({
+    const params = {
       assignmentId,
       actorId: admin.sub,
       actorType: ActorType.ADMIN,
       actorName: admin.name,
       reason: dto.reason,
       reasonCode: dto.reasonCode,
-    });
-    return { ok: true };
+    };
+
+    // Se devuelve a quién alcanzó la baja para que el panel lo confirme: cuando
+    // se cancela a una pareja, decir solo «listo» deja la duda de si el segundo
+    // entró o no.
+    if (dto.cancelSpouse) {
+      const { spouseCancelled } = await this.assignments.cancelWithSpouse(params);
+      return { ok: true, spouseCancelled };
+    }
+
+    await this.assignments.cancel(params);
+    return { ok: true, spouseCancelled: null };
   }
 
   /** Registra a quien se ofreció en el grupo tras la encuesta. */
