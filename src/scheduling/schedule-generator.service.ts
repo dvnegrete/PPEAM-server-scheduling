@@ -10,10 +10,13 @@ import { DateTime } from 'luxon';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { TimeService, Weekday } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { OCCUPYING_STATUSES } from './shifts.service';
 
 export interface GenerationResult {
   shiftsCreated: number;
   shiftsExisting: number;
+  /** Turnos que ya existían y a los que se sentó algún titular que faltaba. */
+  shiftsFilled: number;
   assignmentsCreated: number;
   /** Plantillas donde había más titulares fijos que lugares disponibles. */
   overbookedTemplates: string[];
@@ -57,6 +60,7 @@ export class ScheduleGeneratorService {
     const result: GenerationResult = {
       shiftsCreated: 0,
       shiftsExisting: 0,
+      shiftsFilled: 0,
       assignmentsCreated: 0,
       overbookedTemplates: [],
     };
@@ -79,8 +83,8 @@ export class ScheduleGeneratorService {
 
     this.logger.log(
       `Calendario ${year}-${String(month).padStart(2, '0')} de ${location.name}: ` +
-        `${result.shiftsCreated} turno(s) nuevo(s), ${result.shiftsExisting} ya existente(s), ` +
-        `${result.assignmentsCreated} asignación(es) fija(s)`,
+        `${result.shiftsCreated} turno(s) nuevo(s), ${result.shiftsExisting} ya existente(s) ` +
+        `(${result.shiftsFilled} completado(s)), ${result.assignmentsCreated} asignación(es) fija(s)`,
     );
 
     await this.audit.recordSystem(AUDIT_ACTIONS.SHIFT_GENERATED, 'Location', locationId, {
@@ -134,7 +138,10 @@ export class ScheduleGeneratorService {
         },
       },
     });
-    if (existing) return false;
+    if (existing) {
+      await this.seatMissingHolders(existing, template, dateColumn, result);
+      return false;
+    }
 
     const shift = await this.prisma.shift.create({
       data: {
@@ -184,6 +191,77 @@ export class ScheduleGeneratorService {
     }
 
     return true;
+  }
+
+  /**
+   * Sienta en un turno que ya existe a los titulares que faltan.
+   *
+   * Sin esto, importar o capturar turnos fijos no servía de nada para los meses
+   * ya materializados: el generador abandonaba cada turno existente y los
+   * titulares nuevos solo aparecían en los meses que se crearan después. Es lo
+   * que dejaba el tablero vacío justo en el mes en curso.
+   *
+   * Es un relleno, no una reescritura. No toca a quien ya está sentado, respeta
+   * el cupo, y sobre todo **no resucita una baja**: si alguien canceló ese día,
+   * esa decisión vale más que la regla, y volver a sentarlo haría que el turno
+   * pareciera cubierto cuando no lo está.
+   */
+  private async seatMissingHolders(
+    shift: { id: string; capacity: number; status: ShiftStatus; startsAt: Date },
+    template: {
+      capacity: number;
+      recurringAssignments: Array<{
+        participantId: string;
+        startsOn: Date | null;
+        endsOn: Date | null;
+      }>;
+    },
+    dateColumn: Date,
+    result: GenerationResult,
+  ): Promise<void> {
+    // Un turno cancelado no se repuebla, y el pasado no se reescribe: sentar a
+    // alguien en un turno que ya ocurrió falsearía el historial de asistencia.
+    if (shift.status === ShiftStatus.CANCELLED) return;
+    if (shift.startsAt < this.time.now()) return;
+
+    const asignaciones = await this.prisma.assignment.findMany({
+      where: { shiftId: shift.id },
+      select: { participantId: true, status: true },
+    });
+
+    const ocupantes = asignaciones.filter((a) => OCCUPYING_STATUSES.includes(a.status));
+    const libres = shift.capacity - ocupantes.length;
+    if (libres <= 0) return;
+
+    // Quien ya figura en el turno —sentado o con una baja— no se vuelve a tocar.
+    const yaFigura = new Set(asignaciones.map((a) => a.participantId));
+
+    const faltantes = template.recurringAssignments
+      .filter((recurring) => this.isActiveOn(recurring, dateColumn))
+      .filter((recurring) => !yaFigura.has(recurring.participantId))
+      .slice(0, libres);
+
+    if (faltantes.length === 0) return;
+
+    await this.prisma.assignment.createMany({
+      data: faltantes.map((recurring) => ({
+        shiftId: shift.id,
+        participantId: recurring.participantId,
+        origin: AssignmentOrigin.FIXED,
+        status: AssignmentStatus.ASSIGNED,
+      })),
+      skipDuplicates: true,
+    });
+
+    result.assignmentsCreated += faltantes.length;
+    result.shiftsFilled += 1;
+
+    if (ocupantes.length + faltantes.length >= shift.capacity) {
+      await this.prisma.shift.update({
+        where: { id: shift.id },
+        data: { status: ShiftStatus.FULL },
+      });
+    }
   }
 
   /** Respeta las vigencias de la asignación fija (altas y bajas a mitad de año). */
