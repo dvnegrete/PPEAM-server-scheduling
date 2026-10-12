@@ -102,8 +102,57 @@ describe('Tablero de administradores (integración)', () => {
       expect(asignacion.assignedAt?.getTime()).toBe(NOW.getTime());
     });
 
-    it('no permite exceder el cupo del turno', async () => {
+    it('admite a una cuarta persona por encima del cupo', async () => {
+      // El cupo es la meta, no el tope: un turno holgado no es un problema que
+      // haya que impedir. El extra entra por decisión del administrador.
       const { shift, gente } = await escenario(3);
+
+      await assignments.assignManually({
+        shiftId: shift.id,
+        participantId: gente[3].id,
+        ...admin(),
+      });
+
+      expect(
+        await ctx.prisma.assignment.count({
+          where: { shiftId: shift.id, status: { in: ['ASSIGNED', 'CONFIRMED'] } },
+        }),
+      ).toBe(4);
+    });
+
+    it('rechaza a la quinta, que pasa del tope del punto', async () => {
+      const { shift, gente } = await escenario(3);
+      await assignments.assignManually({
+        shiftId: shift.id,
+        participantId: gente[3].id,
+        ...admin(),
+      });
+
+      await expect(
+        assignments.assignManually({
+          shiftId: shift.id,
+          participantId: gente[4].id,
+          ...admin(),
+        }),
+      ).rejects.toThrow(/máximo del punto/);
+    });
+
+    it('sin margen entre cupo y tope, no hay lugar extra', async () => {
+      const location = await createLocation(ctx.prisma, {
+        minCapacity: 2,
+        defaultCapacity: 3,
+        maxCapacity: 3,
+      });
+      const gente = await Promise.all(
+        ['Ana López', 'Beto Ruiz', 'Carla Díaz', 'Dora Sosa'].map((nombre) =>
+          createParticipant(ctx.prisma, location.id, nombre),
+        ),
+      );
+      const shift = await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        capacity: 3,
+        participantIds: gente.slice(0, 3).map((p) => p.id),
+      });
 
       await expect(
         assignments.assignManually({
@@ -111,7 +160,7 @@ describe('Tablero de administradores (integración)', () => {
           participantId: gente[3].id,
           ...admin(),
         }),
-      ).rejects.toThrow(/ya está completo/);
+      ).rejects.toThrow(/máximo del punto/);
     });
 
     it('rechaza asignar a quien ya tiene lugar', async () => {
@@ -126,8 +175,11 @@ describe('Tablero de administradores (integración)', () => {
       ).rejects.toThrow(/ya tiene lugar/);
     });
 
-    it('con dos registros simultáneos para un solo lugar, entra uno solo', async () => {
-      const { shift, gente } = await escenario(2);
+    it('con dos registros simultáneos para el último lugar, entra uno solo', async () => {
+      // El turno arranca completo para su meta de 3, así que solo queda el lugar
+      // extra: el bloqueo de fila es lo que impide que dos administradores
+      // registrando a la vez dejen cinco personas donde el tope son cuatro.
+      const { shift, gente } = await escenario(3);
 
       const resultados = await Promise.allSettled([
         assignments.assignManually({ shiftId: shift.id, participantId: gente[3].id, ...admin() }),
@@ -139,7 +191,7 @@ describe('Tablero de administradores (integración)', () => {
         await ctx.prisma.assignment.count({
           where: { shiftId: shift.id, status: { in: ['ASSIGNED', 'CONFIRMED'] } },
         }),
-      ).toBe(3);
+      ).toBe(4);
     });
 
     it('al volver a asignar a quien canceló, la fecha refleja el movimiento nuevo', async () => {
@@ -198,6 +250,54 @@ describe('Tablero de administradores (integración)', () => {
       expect(bajoMinimo.days[0].shifts[0].need).toBe('bajoMinimo');
       expect(bajoMinimo.summary.critical).toBe(1);
       expect(bajoMinimo.summary.cancellations).toBe(2);
+    });
+
+    it('un turno con una persona extra sigue completo y no cuenta como incompleto', async () => {
+      // Es la prueba que protege la decisión de diseño: el lugar extra no puede
+      // volver ámbar un turno que ya cumplió su meta, ni inflar el recuento de
+      // turnos incompletos del resumen. Si alguien cambiara `needLevel` para
+      // mirar el tope en vez del cupo, esto falla.
+      const { location, shift, gente } = await escenario(3);
+      await assignments.assignManually({
+        shiftId: shift.id,
+        participantId: gente[3].id,
+        ...admin(),
+      });
+
+      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const turno = tablero.days[0].shifts[0];
+
+      expect(turno.occupied).toBe(4);
+      expect(turno.capacity).toBe(3);
+      expect(turno.need).toBe('ok');
+      expect(tablero.summary.understaffed).toBe(0);
+      expect(tablero.summary.critical).toBe(0);
+      // Y no quedan lugares que convocar ni más extra que ofrecer.
+      expect(turno.freeSlots).toBe(0);
+      expect(turno.extraSlots).toBe(0);
+      expect(shift.capacity).toBe(3);
+    });
+
+    it('informa del lugar extra disponible sin contarlo como hueco', async () => {
+      const { location } = await escenario(3);
+
+      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+        .shifts[0];
+
+      // Completo para la meta: nada que convocar, pero admite uno más.
+      expect(turno.freeSlots).toBe(0);
+      expect(turno.extraSlots).toBe(1);
+    });
+
+    it('el extra se mide desde la meta, no desde la ocupación', async () => {
+      // Con 2 de 3 falta 1 por convocar y hay 1 extra detrás, no 2.
+      const { location } = await escenario(2);
+
+      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+        .shifts[0];
+
+      expect(turno.freeSlots).toBe(1);
+      expect(turno.extraSlots).toBe(1);
     });
 
     it('muestra quién cubre y quién canceló, con sus fechas y responsables', async () => {
