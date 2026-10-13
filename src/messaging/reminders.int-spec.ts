@@ -1,4 +1,4 @@
-import { AssignmentStatus } from '@prisma/client';
+import { AssignmentStatus, ParticipantStatus } from '@prisma/client';
 import { createLocation, createParticipant, createShift } from '../../test/helpers/fixtures';
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { OutgoingMessage } from '../whatsapp/types/message.types';
@@ -104,6 +104,48 @@ describe('Recordatorios de turno (integración)', () => {
     });
 
     expect(await reminders.dispatchDue()).toBe(0);
+  });
+
+  it('no escribe a quien no ha dado consentimiento', async () => {
+    // `sendToParticipant` no comprueba estado ni opt-in —solo `send()` lo hace—,
+    // así que este era el único camino por el que alguien sin consentimiento
+    // podía recibir un mensaje. Es el caso de quien cubre sin estar en el padrón.
+    const location = await createLocation(ctx.prisma);
+    const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+    const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+    await ctx.prisma.participant.update({ where: { id: beto.id }, data: { optInAt: null } });
+    await createShift(ctx.prisma, location.id, {
+      startsAt: new Date('2026-08-26T13:00:00.000Z'),
+      participantIds: [ana.id, beto.id],
+    });
+
+    const sent = await reminders.dispatchDue();
+
+    expect(sent).toBe(1);
+    expect(await messagesFor(ana.phoneE164)).toHaveLength(1);
+    expect(await messagesFor(beto.phoneE164)).toHaveLength(0);
+    // Y su asignación no queda marcada como recordada, para que no se dé por
+    // avisado si más adelante sí consiente.
+    const suya = await ctx.prisma.assignment.findFirstOrThrow({
+      where: { participantId: beto.id },
+    });
+    expect(suya.remindedAt).toBeNull();
+  });
+
+  it('tampoco escribe a quien está pausado', async () => {
+    const location = await createLocation(ctx.prisma);
+    const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+    await ctx.prisma.participant.update({
+      where: { id: ana.id },
+      data: { status: ParticipantStatus.PAUSED },
+    });
+    await createShift(ctx.prisma, location.id, {
+      startsAt: new Date('2026-08-26T13:00:00.000Z'),
+      participantIds: [ana.id],
+    });
+
+    expect(await reminders.dispatchDue()).toBe(0);
+    expect(await messagesFor(ana.phoneE164)).toHaveLength(0);
   });
 
   it('no recuerda turnos cancelados', async () => {

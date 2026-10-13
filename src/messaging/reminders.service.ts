@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { AssignmentStatus, Location, ShiftStatus } from '@prisma/client';
+import { AssignmentStatus, Location, ParticipantStatus, ShiftStatus } from '@prisma/client';
 import { LocationSettings } from '../common/settings/location-settings';
 import { greetingName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
@@ -99,6 +99,11 @@ export class RemindersService {
         // Quien ya confirmó no necesita que se le vuelva a preguntar.
         status: AssignmentStatus.ASSIGNED,
         remindedAt: null,
+        // Sin consentimiento registrado no se le escribe. `sendToParticipant` no
+        // lo comprueba —a diferencia de `send()`, que sí mira estado y opt-in—,
+        // así que el filtro tiene que estar aquí: es el único camino por el que
+        // alguien recibe un mensaje sin haber pasado por esa guardia.
+        participant: { status: ParticipantStatus.ACTIVE, optInAt: { not: null } },
         shift: {
           locationId: location.id,
           date,
