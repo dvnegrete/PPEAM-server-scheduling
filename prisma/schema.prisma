@@ -201,6 +201,15 @@ model Participant {
   /// El estado sí es de la persona: si se da de baja, lo es en todos los puntos.
   status ParticipantStatus @default(ACTIVE)
 
+  /// Cubre turnos aquí pero pertenece a otro punto de exhibición, de los que
+  /// todavía no hay ninguno dado de alta.
+  ///
+  /// Es transitorio a propósito: el día que ese punto exista, a esta persona se
+  /// le da su membresía y deja de ser externa. Hasta entonces, **no tener
+  /// membresía en este punto** es lo que la mantiene fuera del padrón, de los
+  /// candidatos a turno fijo y de las difusiones, sin ninguna regla aparte.
+  external Boolean @default(false)
+
   /// Momento en que aceptó recibir mensajes (requisito de política de Meta).
   optInAt DateTime? @map("opt_in_at")
 
@@ -425,6 +434,13 @@ model Assignment {
 
   /// Última vez que se le envió recordatorio, para no duplicar envíos.
   remindedAt DateTime? @map("reminded_at")
+
+  /// Nota de esa vez: «la trajo Dora».
+  ///
+  /// Va en la asignación y no en la persona porque describe la ocasión: quien
+  /// cubre dos veces tiene dos motivos distintos, y una nota pegada al registro
+  /// seguiría mostrándose cuando ya no viene al caso.
+  note String?
 
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")

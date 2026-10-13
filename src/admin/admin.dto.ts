@@ -10,6 +10,7 @@ import {
   IsString,
   Max,
   Min,
+  ValidateNested,
 } from 'class-validator';
 import { CANCEL_REASON_CODES } from '../scheduling/assignments.service';
 
@@ -220,10 +221,58 @@ export class CancelAssignmentDto {
   cancelSpouse?: boolean;
 }
 
+/** Datos mínimos de quien cubre sin estar en el padrón de este punto. */
+export class ExternalCoverDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el nombre' })
+  firstName!: string;
+
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el apellido' })
+  paternalSurname!: string;
+
+  /** El formato lo valida PhoneService, igual que en el alta del padrón. */
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el teléfono' })
+  phone!: string;
+
+  /** Nota de esa vez: «la trajo Dora». */
+  @IsOptional()
+  @IsString()
+  note?: string;
+}
+
+/** Alguien del padrón, para los turnos fijos. Un invitado no puede ser titular. */
 export class AssignParticipantDto {
   @IsString()
   @IsNotEmpty({ message: 'Falta el participante' })
   participantId!: string;
+}
+
+/**
+ * Quién cubre un turno concreto, de una de dos formas excluyentes: alguien del
+ * padrón por su `participantId`, o alguien de fuera con sus datos mínimos.
+ *
+ * Es un DTO aparte de `AssignParticipantDto` porque los dos endpoints tienen
+ * contratos distintos: a un turno fijo solo se sienta gente del padrón, y
+ * aflojar ese `participantId` para reutilizar la clase dejaría ese alta sin
+ * validar.
+ */
+export class CoverShiftDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'Falta el participante' })
+  participantId?: string;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => ExternalCoverDto)
+  external?: ExternalCoverDto;
+
+  /** Nota de esa vez, también para alguien del padrón. */
+  @IsOptional()
+  @IsString()
+  note?: string;
 }
 
 export class UpdateMaritalDto {

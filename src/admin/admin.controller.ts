@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -23,6 +24,7 @@ import { AdminAuthGuard } from './admin-auth.guard';
 import {
   AssignParticipantDto,
   CancelAssignmentDto,
+  CoverShiftDto,
   CreateParticipantDto,
   CreateWindowDto,
   UpdateMaritalDto,
@@ -427,13 +429,37 @@ export class AdminController {
   @UseGuards(AdminAuthGuard)
   @HttpCode(201)
   async assignParticipant(
+    @Param('id') id: string,
     @Param('shiftId') shiftId: string,
-    @Body() dto: AssignParticipantDto,
+    @Body() dto: CoverShiftDto,
     @CurrentAdmin() admin: AdminTokenPayload,
   ) {
+    // Quien no está en el padrón se resuelve antes: se crea su registro mínimo
+    // —o se reutiliza el que ya tenga— y a partir de ahí el alta es la misma
+    // para todos, con el mismo cupo y las mismas validaciones.
+    const participantId =
+      dto.participantId ??
+      (dto.external
+        ? (
+            await this.participants.findOrCreateExternal({
+              ...dto.external,
+              locationId: id,
+              actorId: admin.sub,
+              actorName: admin.name,
+            })
+          ).id
+        : null);
+
+    if (!participantId) {
+      throw new BadRequestException(
+        'Indica a quién del padrón, o los datos de quien viene de fuera',
+      );
+    }
+
     await this.assignments.assignManually({
       shiftId,
-      participantId: dto.participantId,
+      participantId,
+      note: dto.note ?? dto.external?.note ?? null,
       actorId: admin.sub,
       actorName: admin.name,
       actorType: ActorType.ADMIN,
@@ -448,7 +474,14 @@ export class AdminController {
     const candidatos = await this.prisma.participant.findMany({
       where: {
         status: 'ACTIVE',
-        memberships: { some: { locationId: id, active: true } },
+        OR: [
+          { memberships: { some: { locationId: id, active: true } } },
+          // Los de fuera que ya han cubierto **en este punto**. El acotado
+          // importa: sin él, cada invitado creado aparecería en todos los puntos
+          // para siempre, y la lista dejaría de ser de quien de verdad ha
+          // ayudado aquí.
+          { external: true, assignments: { some: { shift: { locationId: id } } } },
+        ],
         // Quien ya ocupa un lugar en ese turno no puede volver a tomarlo.
         NOT: {
           assignments: {
@@ -463,6 +496,7 @@ export class AdminController {
         maternalSurname: true,
         displayName: true,
         phoneE164: true,
+        external: true,
       },
       orderBy: [...PADRON_ORDER],
     });

@@ -1,4 +1,10 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import {
   ActorType,
   MaritalStatus,
@@ -7,7 +13,7 @@ import {
   ParticipantStatus,
 } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
-import { displayName, fullName, PADRON_ORDER } from '../common/names/person-name';
+import { displayName, formalName, fullName, PADRON_ORDER } from '../common/names/person-name';
 import { PhoneService } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -16,6 +22,8 @@ import { OrganizationFieldsService } from './organization-fields.service';
 
 @Injectable()
 export class ParticipantsService {
+  private readonly logger = new Logger(ParticipantsService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly phone: PhoneService,
@@ -87,6 +95,74 @@ export class ParticipantsService {
     });
 
     return participant;
+  }
+
+  /**
+   * Resuelve a quien cubre un turno **sin pertenecer al padrón de este punto**.
+   *
+   * No sirve `create()`: ese da por hecho que la persona se suma al punto y le
+   * crea una membresía. El invitado precisamente no debe tenerla —es lo que lo
+   * mantiene fuera del padrón, de los candidatos a turno fijo y de las
+   * difusiones, sin ninguna regla aparte— y tampoco se le registra
+   * consentimiento, porque nadie se lo ha pedido.
+   *
+   * El teléfono es lo que hace que funcione volver a elegirlo: se teclea una vez
+   * y a partir de ahí se reutiliza el mismo registro.
+   */
+  async findOrCreateExternal(params: {
+    firstName: string;
+    paternalSurname: string;
+    phone: string;
+    locationId: string;
+    actorId?: string | null;
+    actorName?: string | null;
+  }): Promise<Participant> {
+    let phoneE164: string;
+    try {
+      phoneE164 = this.phone.normalize(params.phone);
+    } catch {
+      throw new BadRequestException(`El teléfono "${params.phone}" no es válido`);
+    }
+
+    const existente = await this.findByPhone(phoneE164);
+    if (existente) {
+      // Si ya está en el padrón de este punto, no hay que crear a nadie: lo que
+      // toca es elegirlo de la lista. Crear un segundo registro con su mismo
+      // número partiría su historial en dos.
+      const esDelPadron = await this.memberships.membershipIn(existente.id, params.locationId);
+      if (esDelPadron?.active) {
+        throw new ConflictException(
+          `${formalName(existente)} sí está en el padrón de este punto. Selecciónala de la lista`,
+        );
+      }
+      return existente;
+    }
+
+    const firstName = params.firstName.trim();
+    const paternalSurname = params.paternalSurname.trim();
+    if (!firstName || !paternalSurname) {
+      throw new BadRequestException('Hacen falta el nombre y el apellido');
+    }
+
+    const invitado = await this.prisma.participant.create({
+      data: { firstName, paternalSurname, phoneE164, external: true },
+    });
+
+    await this.audit.record({
+      actorType: params.actorId ? ActorType.ADMIN : ActorType.SYSTEM,
+      actorId: params.actorId ?? null,
+      actorName: params.actorName ?? null,
+      action: AUDIT_ACTIONS.PARTICIPANT_CREATED,
+      entity: 'Participant',
+      entityId: invitado.id,
+      after: { nombre: fullName(invitado), phoneE164, external: true },
+      metadata: { locationId: params.locationId, motivo: 'cubre sin estar en el padrón' },
+    });
+
+    this.logger.log(
+      `${fullName(invitado)} queda registrado como externo para cubrir en ${params.locationId}`,
+    );
+    return invitado;
   }
 
   /**

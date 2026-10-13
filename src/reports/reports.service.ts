@@ -91,6 +91,8 @@ export interface DashboardShift {
     name: string;
     /** Cónyuge que también participa; sirve para emparejarlos dentro del turno. */
     spouseId: string | null;
+    /** Nota de esa vez, si se capturó al registrarlo. */
+    note: string | null;
     origin: AssignmentOrigin;
     confirmed: boolean;
     assignedAt: string | null;
@@ -431,6 +433,7 @@ export class ReportsService {
           participantId: assignment.participant.id,
           name: displayName(assignment.participant),
           spouseId: assignment.participant.spouseId,
+          note: assignment.note,
           origin: assignment.origin,
           confirmed: assignment.status === AssignmentStatus.CONFIRMED,
           assignedAt: assignment.assignedAt?.toISOString() ?? null,

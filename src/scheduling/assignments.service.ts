@@ -266,6 +266,8 @@ export class AssignmentsService {
   async assignManually(params: {
     shiftId: string;
     participantId: string;
+    /** Nota de esa vez; se guarda en la asignación, no en la persona. */
+    note?: string | null;
     actorId?: string | null;
     actorName?: string | null;
     actorType?: ActorType;
@@ -329,12 +331,16 @@ export class AssignmentsService {
           status: AssignmentStatus.ASSIGNED,
           assignedAt: this.time.now(),
           assignedByName: params.actorName ?? null,
+          note: params.note?.trim() || null,
         },
         update: {
           origin: 'COVERAGE',
           status: AssignmentStatus.ASSIGNED,
           assignedAt: this.time.now(),
           assignedByName: params.actorName ?? null,
+          // La nota es de esta vez, así que sustituye a la de la ocasión previa
+          // cuando la fila se reutiliza.
+          note: params.note?.trim() || null,
           cancelledAt: null,
           cancelReason: null,
           cancelReasonCode: null,
