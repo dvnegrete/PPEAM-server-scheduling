@@ -48,6 +48,12 @@ export const AUDIT_ACTIONS = {
   ADMIN_LOGIN: 'admin.login',
   /** Intento fallido. Se guarda el correo probado y **nunca** la contraseña. */
   ADMIN_LOGIN_FAILED: 'admin.login_failed',
+  ADMIN_USER_CREATED: 'admin_user.created',
+  ADMIN_USER_UPDATED: 'admin_user.updated',
+  /** Un administrador restableció la contraseña de otra cuenta. */
+  ADMIN_PASSWORD_RESET: 'admin_user.password_reset',
+  /** Cada quien cambió la suya. */
+  ADMIN_PASSWORD_CHANGED: 'admin_user.password_changed',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];

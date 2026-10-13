@@ -20,11 +20,16 @@ import { PhoneService } from '../common/phone/phone.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
-import { AdminAuthGuard, SoloAdmin } from './admin-auth.guard';
+import { AdminAuthGuard, PermitidoConCambioPendiente, SoloAdmin } from './admin-auth.guard';
+import { AdminUsersService } from './admin-users.service';
 import {
   AssignParticipantDto,
   CancelAssignmentDto,
+  ChangeOwnPasswordDto,
   CoverShiftDto,
+  CreateAdminUserDto,
+  ResetPasswordDto,
+  UpdateAdminUserDto,
   CreateParticipantDto,
   CreateWindowDto,
   UpdateMaritalDto,
@@ -49,7 +54,13 @@ import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import { ActorType, MaritalStatus, ParticipantRole, ParticipantStatus } from '@prisma/client';
+import {
+  ActorType,
+  AdminRole,
+  MaritalStatus,
+  ParticipantRole,
+  ParticipantStatus,
+} from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
 @Controller('api/admin')
@@ -69,6 +80,7 @@ export class AdminController {
     private readonly recurring: RecurringAssignmentsService,
     private readonly profiles: ParticipantProfileService,
     private readonly phone: PhoneService,
+    private readonly adminUsers: AdminUsersService,
   ) {}
 
   @Post('login')
@@ -77,6 +89,90 @@ export class AdminController {
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
   }
+
+  // -------------------------------------------------------------------------
+  // Cuentas del panel
+  // -------------------------------------------------------------------------
+
+  /**
+   * Quién soy.
+   *
+   * El panel lo necesita para decidir qué pestañas pinta y si tiene que
+   * obligar a cambiar la contraseña antes de dejar ver nada.
+   */
+  @Get('me')
+  @UseGuards(AdminAuthGuard)
+  @PermitidoConCambioPendiente()
+  me(@CurrentAdmin() admin: AdminTokenPayload) {
+    return this.adminUsers.byId(admin.sub);
+  }
+
+  /** Cambiar mi propia contraseña. Cierra las demás sesiones abiertas. */
+  @Post('me/password')
+  @UseGuards(AdminAuthGuard)
+  @PermitidoConCambioPendiente()
+  @HttpCode(200)
+  async changeOwnPassword(
+    @Body() dto: ChangeOwnPasswordDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.adminUsers.changeOwnPassword(admin.sub, dto.current, dto.password);
+    // El token lleva la versión anterior, así que deja de valer: hay que volver
+    // a entrar, y eso es justamente lo que se quiere al cambiar la contraseña.
+    return { ok: true, vuelveAEntrar: true };
+  }
+
+  @Get('admin-users')
+  @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
+  adminUsersList() {
+    return this.adminUsers.list();
+  }
+
+  @Post('admin-users')
+  @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
+  @HttpCode(201)
+  createAdminUser(@Body() dto: CreateAdminUserDto, @CurrentAdmin() admin: AdminTokenPayload) {
+    return this.adminUsers.create(
+      { ...dto, role: AdminRole[dto.role] },
+      { id: admin.sub, name: admin.name },
+    );
+  }
+
+  @Patch('admin-users/:adminUserId')
+  @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
+  updateAdminUser(
+    @Param('adminUserId') adminUserId: string,
+    @Body() dto: UpdateAdminUserDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    return this.adminUsers.update(
+      adminUserId,
+      { ...dto, role: dto.role ? AdminRole[dto.role] : undefined },
+      { id: admin.sub, name: admin.name },
+    );
+  }
+
+  /** Restablecer la contraseña de otra cuenta. */
+  @Post('admin-users/:adminUserId/password')
+  @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
+  @HttpCode(200)
+  async resetAdminUserPassword(
+    @Param('adminUserId') adminUserId: string,
+    @Body() dto: ResetPasswordDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.adminUsers.resetPassword(adminUserId, dto.password, {
+      id: admin.sub,
+      name: admin.name,
+    });
+    return { ok: true };
+  }
+
+  // -------------------------------------------------------------------------
 
   @Get('locations')
   @UseGuards(AdminAuthGuard)

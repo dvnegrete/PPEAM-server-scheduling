@@ -9,6 +9,7 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 import { SupervisorsModule } from '../supervisors/supervisors.module';
 import { AdminAuthGuard } from './admin-auth.guard';
 import { AdminController } from './admin.controller';
+import { AdminUsersService } from './admin-users.service';
 import { AdminAuthService } from './auth.service';
 
 @Module({
@@ -35,7 +36,7 @@ import { AdminAuthService } from './auth.service';
     }),
   ],
   controllers: [AdminController],
-  providers: [AdminAuthService, AdminAuthGuard],
+  providers: [AdminAuthService, AdminAuthGuard, AdminUsersService],
   exports: [AdminAuthService],
 })
 export class AdminModule {}

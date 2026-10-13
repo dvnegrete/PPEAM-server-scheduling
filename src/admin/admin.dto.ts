@@ -10,6 +10,7 @@ import {
   IsString,
   Max,
   Min,
+  MinLength,
   ValidateNested,
 } from 'class-validator';
 import { CANCEL_REASON_CODES } from '../scheduling/assignments.service';
@@ -240,6 +241,124 @@ export class ExternalCoverDto {
   @IsOptional()
   @IsString()
   note?: string;
+}
+
+// -------------------------------------------------------------------------
+// Cuentas del panel
+// -------------------------------------------------------------------------
+
+const ROLES_DE_CUENTA = ['ADMIN', 'SUPERVISOR'] as const;
+const MINIMO = 8;
+
+export class CreateAdminUserDto {
+  @IsEmail({}, { message: 'El correo no es válido' })
+  email!: string;
+
+  @IsString()
+  @MinLength(MINIMO, { message: `La contraseña debe tener al menos ${MINIMO} caracteres` })
+  password!: string;
+
+  @IsIn([...ROLES_DE_CUENTA], { message: 'Rol no válido: usa ADMIN o SUPERVISOR' })
+  role!: (typeof ROLES_DE_CUENTA)[number];
+
+  /** A quién del padrón corresponde. Opcional: puede no estar. */
+  @IsOptional()
+  @IsString()
+  participantId?: string | null;
+
+  /** Datos propios, obligatorios **solo** si la cuenta no se vincula. */
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  paternalSurname?: string;
+
+  @IsOptional()
+  @IsString()
+  maternalSurname?: string | null;
+
+  @IsOptional()
+  @IsString()
+  phone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  congregation?: string | null;
+
+  @IsOptional()
+  @IsString()
+  circuit?: string | null;
+
+  @IsOptional()
+  @IsString()
+  city?: string | null;
+}
+
+export class UpdateAdminUserDto {
+  @IsOptional()
+  @IsEmail({}, { message: 'El correo no es válido' })
+  email?: string;
+
+  @IsOptional()
+  @IsIn([...ROLES_DE_CUENTA], { message: 'Rol no válido: usa ADMIN o SUPERVISOR' })
+  role?: (typeof ROLES_DE_CUENTA)[number];
+
+  @IsOptional()
+  @IsBoolean()
+  active?: boolean;
+
+  /** `null` desvincula del padrón; un id vincula. */
+  @IsOptional()
+  @IsString()
+  participantId?: string | null;
+
+  @IsOptional()
+  @IsString()
+  firstName?: string;
+
+  @IsOptional()
+  @IsString()
+  paternalSurname?: string;
+
+  @IsOptional()
+  @IsString()
+  maternalSurname?: string | null;
+
+  @IsOptional()
+  @IsString()
+  phone?: string | null;
+
+  @IsOptional()
+  @IsString()
+  congregation?: string | null;
+
+  @IsOptional()
+  @IsString()
+  circuit?: string | null;
+
+  @IsOptional()
+  @IsString()
+  city?: string | null;
+}
+
+/** Un administrador restablece la contraseña de otra cuenta. */
+export class ResetPasswordDto {
+  @IsString()
+  @MinLength(MINIMO, { message: `La contraseña debe tener al menos ${MINIMO} caracteres` })
+  password!: string;
+}
+
+/** Cada quien cambia la suya, demostrando que sabe la actual. */
+export class ChangeOwnPasswordDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Falta la contraseña actual' })
+  current!: string;
+
+  @IsString()
+  @MinLength(MINIMO, { message: `La contraseña nueva debe tener al menos ${MINIMO} caracteres` })
+  password!: string;
 }
 
 /** Alguien del padrón, para los turnos fijos. Un invitado no puede ser titular. */
