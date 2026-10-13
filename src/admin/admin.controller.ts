@@ -20,7 +20,7 @@ import { PhoneService } from '../common/phone/phone.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
-import { AdminAuthGuard } from './admin-auth.guard';
+import { AdminAuthGuard, SoloAdmin } from './admin-auth.guard';
 import {
   AssignParticipantDto,
   CancelAssignmentDto,
@@ -48,6 +48,7 @@ import {
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
+import { ThrottlerGuard } from '@nestjs/throttler';
 import { ActorType, MaritalStatus, ParticipantRole, ParticipantStatus } from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
@@ -72,6 +73,7 @@ export class AdminController {
 
   @Post('login')
   @HttpCode(200)
+  @UseGuards(ThrottlerGuard)
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
   }
@@ -240,6 +242,7 @@ export class AdminController {
 
   @Post('locations/:id/import/participants')
   @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
   @HttpCode(200)
   importParticipants(@Param('id') id: string, @Body() dto: ImportDto) {
     return this.importer.importParticipants(dto.csv, {
@@ -250,6 +253,7 @@ export class AdminController {
 
   @Post('locations/:id/import/assignments')
   @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
   @HttpCode(200)
   importAssignments(@Param('id') id: string, @Body() dto: ImportDto) {
     return this.importer.importRecurringAssignments(dto.csv, {
@@ -546,6 +550,7 @@ export class AdminController {
 
   @Patch('locations/:id/settings')
   @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
   updateSettings(@Param('id') id: string, @Body() dto: UpdateSettingsDto) {
     return this.settings.update(id, dto);
   }
@@ -564,6 +569,7 @@ export class AdminController {
 
   @Get('audit')
   @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
   audit(
     @Query('entity') entity?: string,
     @Query('entityId') entityId?: string,

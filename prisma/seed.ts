@@ -1,5 +1,6 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { BCRYPT_COST } from '../src/admin/auth.service';
 
 const prisma = new PrismaClient();
 
@@ -74,7 +75,8 @@ async function main(): Promise<void> {
       firstName: adminFirstName,
       paternalSurname: adminPaternal,
       maternalSurname: adminMaternal,
-      passwordHash: await bcrypt.hash(adminPassword, 10),
+      // Mismo coste que el alta de cuentas desde el panel.
+      passwordHash: await bcrypt.hash(adminPassword, BCRYPT_COST),
     },
   });
   console.log(`Usuario del panel: ${adminEmail}`);

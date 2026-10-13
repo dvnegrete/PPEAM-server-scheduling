@@ -258,6 +258,8 @@ model Participant {
   claimedTasks         SupervisorTask[]      @relation("TaskClaimer")
   resolvedTasks        SupervisorTask[]      @relation("TaskResolver")
   decidedOffers        CoverageOffer[]       @relation("OfferDecider")
+  /// Cuenta del panel, si esta persona tiene una.
+  adminUser            AdminUser?
 
   @@index([status])
   @@index([paternalSurname, maternalSurname, firstName])
@@ -760,21 +762,66 @@ model AdminLocationAccess {
   @@map("admin_location_access")
 }
 
-/// Usuario del panel web (separado del padrón de WhatsApp).
-model AdminUser {
-  id           String @id @default(cuid())
-  email        String @unique
-  passwordHash String @map("password_hash")
+/// Qué puede hacer una cuenta en el panel.
+enum AdminRole {
+  /// Todo, incluidos los ajustes del punto, la importación y las cuentas.
+  ADMIN
+  /// El día a día del punto: tablero, calendario, encuesta y padrón.
+  SUPERVISOR
+}
 
+/// Por dónde se autentica una cuenta.
+///
+/// Se declara ya con `GOOGLE` para no volver a migrar cuando se añada OAuth:
+/// hoy nadie lo usa y todas las cuentas entran con contraseña.
+enum AuthProvider {
+  PASSWORD
+  GOOGLE
+}
+
+/// Usuario del panel web.
+///
+/// Puede estar **vinculado** a alguien del padrón o no, y es opcional a
+/// propósito: un administrador puede no atender turnos, y un encargado sí.
+/// Cuando hay vínculo, el nombre, el teléfono y la organización son los del
+/// participante y los campos de aquí quedan inertes; la resolución vive en un
+/// solo sitio, `AdminUsersService.perfilDe()`, para que no haya dos verdades.
+model AdminUser {
+  id    String @id @default(cuid())
+  email String @unique
+
+  /// Opcional porque una cuenta de Google no tendrá contraseña.
+  passwordHash String?      @map("password_hash")
+  authProvider AuthProvider @default(PASSWORD) @map("auth_provider")
+
+  role AdminRole @default(ADMIN)
+
+  /// Datos propios, usados **solo** si la cuenta no está vinculada al padrón.
   firstName       String  @map("first_name")
   paternalSurname String  @map("paternal_surname")
   maternalSurname String? @map("maternal_surname")
+  phone           String?
 
   congregation String?
   circuit      String?
   city         String?
 
+  /// Quién es en el padrón, si es que está. El índice único lo hace 1:1: un
+  /// participante no puede tener dos cuentas.
+  participantId String?      @unique @map("participant_id")
+  participant   Participant? @relation(fields: [participantId], references: [id], onDelete: SetNull)
+
   active Boolean @default(true)
+
+  /// Sube al cambiar la contraseña y al desactivar la cuenta.
+  ///
+  /// El token lleva este número dentro y el guard lo compara en cada petición.
+  /// Sin él, `verify()` es solo criptográfico y desactivar a alguien no cortaría
+  /// su sesión hasta que el token caducara, hasta doce horas después.
+  tokenVersion Int @default(0) @map("token_version")
+
+  /// La contraseña la puso un administrador: hay que cambiarla al entrar.
+  mustChangePassword Boolean @default(false) @map("must_change_password")
 
   lastLoginAt DateTime? @map("last_login_at")
   createdAt   DateTime  @default(now()) @map("created_at")
@@ -782,5 +829,6 @@ model AdminUser {
 
   locationAccess AdminLocationAccess[]
 
+  @@index([role, active])
   @@map("admin_users")
 }

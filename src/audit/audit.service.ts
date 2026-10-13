@@ -44,6 +44,10 @@ export const AUDIT_ACTIONS = {
   RECURRING_ASSIGNED: 'recurring.assigned',
   RECURRING_UNASSIGNED: 'recurring.unassigned',
   IMPORT_RUN: 'import.run',
+  /** Entrada al panel. Con varias cuentas, saber quién entró deja de ser trivial. */
+  ADMIN_LOGIN: 'admin.login',
+  /** Intento fallido. Se guarda el correo probado y **nunca** la contraseña. */
+  ADMIN_LOGIN_FAILED: 'admin.login_failed',
 } as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[keyof typeof AUDIT_ACTIONS];
