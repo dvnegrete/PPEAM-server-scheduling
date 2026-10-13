@@ -1,6 +1,9 @@
 {
   "name": "ppeam-jw-schedules-server",
   "version": "0.1.0",
+  "engines": {
+    "node": "22.x"
+  },
   "description": "Sistema de horarios por WhatsApp para puntos de exhibición",
   "private": true,
   "license": "UNLICENSED",
