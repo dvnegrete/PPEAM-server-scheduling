@@ -94,7 +94,8 @@ export class PollDraftService {
         text: this.optionText(shift, faltan, location.timezone),
       }));
 
-    const question = this.questionText(from, to, location.timezone);
+    // const question = this.questionText(from, to, location.timezone);
+    const question = `Puedo hacerme disponible para cubrir alguno de los siguientes turnos:`;
 
     return {
       question,
@@ -152,6 +153,7 @@ export class PollDraftService {
     return `${palabra} ${faltan === 1 ? 'Participante' : 'Participantes'}`;
   }
 
+  // TODO: Analizar si es necesario el rango de fechas o se elimina.
   private questionText(from: Date, to: Date, timezone: string): string {
     const desde = this.time.toLocalDate(from, timezone).setLocale('es-MX');
     const hasta = this.time.toLocalDate(to, timezone).setLocale('es-MX');
@@ -162,7 +164,7 @@ export class PollDraftService {
         ? `del ${desde.day} al ${hasta.toFormat("d 'de' LLLL")}`
         : `del ${desde.toFormat("d 'de' LLLL")} al ${hasta.toFormat("d 'de' LLLL")}`;
 
-    return `¿Quién puede apoyar en el exhibidor ${rango}?`;
+    return ` ¿Quién puede apoyar en el exhibidor ${rango}?`;
   }
 
   private plainText(question: string, options: PollOption[]): string {
