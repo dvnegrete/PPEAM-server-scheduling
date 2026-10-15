@@ -443,9 +443,25 @@ describe('Tablero de administradores (integración)', () => {
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
 
       expect(borrador.options).toHaveLength(1);
-      expect(borrador.options[0].text).toBe('domingo 30 · 7:00 a 9:00 (falta 1)');
-      expect(borrador.question).toContain('¿Quién puede apoyar en el exhibidor');
+      expect(borrador.options[0].text).toBe('Dom. 30 de *07:00 a 09:00 am* (Un(a) Participante)');
+      expect(borrador.question).toContain(
+        'Puedo hacerme disponible para cubrir alguno de los siguientes turnos:',
+      );
       expect(borrador.truncated).toBe(false);
+    });
+
+    it('marca am y pm en los dos extremos solo cuando el turno cruza el mediodía', async () => {
+      const location = await createLocation(ctx.prisma, { minCapacity: 2, defaultCapacity: 3 });
+      await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T17:00:00.000Z'),
+        startMinute: 11 * 60,
+        endMinute: 13 * 60,
+        capacity: 2,
+      });
+
+      const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
+
+      expect(borrador.options[0].text).toBe('Dom. 30 de *11:00 am a 01:00 pm* (Dos Participantes)');
     });
 
     it('con nivel «mínimo» solo convoca lo que está por debajo de dos personas', async () => {
@@ -470,7 +486,7 @@ describe('Tablero de administradores (integración)', () => {
 
       const critico = await poll.build(location.id, RANGO_INICIO, RANGO_FIN, 'minimo');
       expect(critico.options).toHaveLength(1);
-      expect(critico.options[0].text).toContain('falta 1');
+      expect(critico.options[0].text).toContain('Un(a) Participante');
     });
 
     it('corta en doce opciones y lo advierte, porque es el límite de WhatsApp', async () => {

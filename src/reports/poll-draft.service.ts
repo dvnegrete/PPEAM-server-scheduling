@@ -7,6 +7,13 @@ import { OCCUPYING_STATUSES } from '../scheduling/shifts.service';
 /** Límite de opciones de una encuesta de WhatsApp. */
 export const WHATSAPP_POLL_MAX_OPTIONS = 12;
 
+/**
+ * Cuánta gente se pide, en palabras. El cupo de un turno es de unas pocas
+ * personas, así que la tabla cubre el rango real y cae al número si algún día
+ * se amplía.
+ */
+const PARTICIPANTES_EN_PALABRAS = ['Cero', 'Un(a)', 'Dos', 'Tres', 'Cuatro', 'Cinco', 'Seis'];
+
 /** Qué turnos entran en la convocatoria. */
 export type PollLevel = 'cupo' | 'minimo';
 
@@ -87,7 +94,8 @@ export class PollDraftService {
         text: this.optionText(shift, faltan, location.timezone),
       }));
 
-    const question = this.questionText(from, to, location.timezone);
+    // const question = this.questionText(from, to, location.timezone);
+    const question = `Puedo hacerme disponible para cubrir alguno de los siguientes turnos:`;
 
     return {
       question,
@@ -99,36 +107,71 @@ export class PollDraftService {
     };
   }
 
-  /** «jueves 24 · 7:00 a 9:00 (faltan 2)» */
+  /** «Jue. 15 de *11:00 am a 01:00 pm* (Un(a) Participante)» */
   private optionText(
     shift: { date: Date; startMinute: number; endMinute: number },
     faltan: number,
     timezone: string,
   ): string {
-    const dia = this.time.toLocalDate(shift.date, timezone).setLocale('es-MX').toFormat('cccc d');
-    const horario = this.time.formatRange(shift.startMinute, shift.endMinute);
-    const cuantos = faltan === 1 ? 'falta 1' : `faltan ${faltan}`;
-    return `${dia} · ${horario} (${cuantos})`;
+    const fecha = this.time.toLocalDate(shift.date, timezone).setLocale('es-MX');
+    // Algunas versiones de Intl devuelven la abreviatura con punto y otras sin
+    // él, así que se normaliza antes de añadirlo.
+    const abreviatura = fecha.toFormat('ccc').replace(/\.$/, '');
+    const dia = `${abreviatura.charAt(0).toUpperCase()}${abreviatura.slice(1)}.`;
+    const horario = this.rango12h(shift.startMinute, shift.endMinute);
+    return `${dia} ${fecha.day} de *${horario}* (${this.cuantosFaltan(faltan)})`;
   }
 
-  private questionText(from: Date, to: Date, timezone: string): string {
-    const desde = this.time.toLocalDate(from, timezone).setLocale('es-MX');
-    const hasta = this.time.toLocalDate(to, timezone).setLocale('es-MX');
-
-    // Dentro del mismo mes no hace falta repetirlo: «del 22 al 28 de septiembre».
-    const rango =
-      desde.month === hasta.month
-        ? `del ${desde.day} al ${hasta.toFormat("d 'de' LLLL")}`
-        : `del ${desde.toFormat("d 'de' LLLL")} al ${hasta.toFormat("d 'de' LLLL")}`;
-
-    return `¿Quién puede apoyar en el exhibidor ${rango}?`;
+  /**
+   * «07:00 a 09:00 am» o «11:00 am a 01:00 pm».
+   *
+   * Con los dos extremos en la misma mitad del día basta decirlo una vez al
+   * final; solo cuando el turno cruza el mediodía hay que marcar los dos, que es
+   * donde se presta a confusión.
+   */
+  private rango12h(startMinute: number, endMinute: number): string {
+    const inicio = this.hora12(startMinute);
+    const fin = this.hora12(endMinute);
+    return inicio.meridiano === fin.meridiano
+      ? `${inicio.reloj} a ${fin.reloj} ${fin.meridiano}`
+      : `${inicio.reloj} ${inicio.meridiano} a ${fin.reloj} ${fin.meridiano}`;
   }
+
+  /** «07:00» + «am» a partir de 420. No usa Luxon: `a` da «a. m.» en es-MX. */
+  private hora12(minuteOfDay: number): { reloj: string; meridiano: 'am' | 'pm' } {
+    const hora24 = Math.floor(minuteOfDay / 60) % 24;
+    const hora = hora24 % 12 === 0 ? 12 : hora24 % 12;
+    return {
+      reloj: `${String(hora).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`,
+      meridiano: hora24 < 12 ? 'am' : 'pm',
+    };
+  }
+
+  /** «Un(a) Participante», «Dos Participantes»… */
+  private cuantosFaltan(faltan: number): string {
+    const palabra = PARTICIPANTES_EN_PALABRAS[faltan] ?? String(faltan);
+    return `${palabra} ${faltan === 1 ? 'Participante' : 'Participantes'}`;
+  }
+
+  // TODO: Analizar si es necesario el rango de fechas o se elimina.
+  // private questionText(from: Date, to: Date, timezone: string): string {
+  //   const desde = this.time.toLocalDate(from, timezone).setLocale('es-MX');
+  //   const hasta = this.time.toLocalDate(to, timezone).setLocale('es-MX');
+
+  //   // Dentro del mismo mes no hace falta repetirlo: «del 22 al 28 de septiembre».
+  //   const rango =
+  //     desde.month === hasta.month
+  //       ? `del ${desde.day} al ${hasta.toFormat("d 'de' LLLL")}`
+  //       : `del ${desde.toFormat("d 'de' LLLL")} al ${hasta.toFormat("d 'de' LLLL")}`;
+
+  //   return ` ¿Quién puede apoyar en el exhibidor ${rango}?`;
+  // }
 
   private plainText(question: string, options: PollOption[]): string {
     if (options.length === 0) {
       return `${question}\n\nPor ahora no hay turnos por cubrir. ¡Gracias!`;
     }
-    const lineas = options.map((option) => `• ${option.text}`).join('\n');
+    const lineas = options.map((option) => option.text).join('\n');
     return `${question}\n\n${lineas}`;
   }
 }
