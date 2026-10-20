@@ -31,6 +31,8 @@ export interface PollDraft {
   options: PollOption[];
   /** Texto completo, por si prefieren publicarlo como mensaje normal. */
   plainText: string;
+  /** Petición de apoyo para el grupo de suplencias, con la ubicación del punto. */
+  substitutesText: string;
   /** Necesidades encontradas en el rango, antes de recortar a 12. */
   totalNeeded: number;
   /** true cuando hubo que dejar fuera turnos por el límite de WhatsApp. */
@@ -97,10 +99,13 @@ export class PollDraftService {
     // const question = this.questionText(from, to, location.timezone);
     const question = `Puedo hacerme disponible para cubrir alguno de los siguientes turnos:`;
 
+    const plainText = this.plainText(question, options);
+
     return {
       question,
       options,
-      plainText: this.plainText(question, options),
+      plainText,
+      substitutesText: this.substitutesText(plainText, options, location),
       totalNeeded: necesidades.length,
       truncated: necesidades.length > WHATSAPP_POLL_MAX_OPTIONS,
       maxOptions: WHATSAPP_POLL_MAX_OPTIONS,
@@ -173,5 +178,37 @@ export class PollDraftService {
     }
     const lineas = options.map((option) => option.text).join('\n');
     return `${question}\n\n${lineas}`;
+  }
+
+  /**
+   * La misma lista de turnos, pedida al grupo de suplencias.
+   *
+   * Ese grupo reúne gente que no pertenece a este punto, así que el mensaje no
+   * puede dar por sabido de qué exhibidor se habla: la ubicación va dentro de la
+   * petición, en negritas.
+   */
+  private substitutesText(
+    plainText: string,
+    options: PollOption[],
+    location: { name: string; address: string | null },
+  ): string {
+    // Sin turnos por cubrir no hay apoyo que pedir, y el aviso de que no hace
+    // falta publicar nada es el mismo para los dos grupos.
+    if (options.length === 0) return plainText;
+    return this.plainText(this.peticionDeApoyo(location), options);
+  }
+
+  /** El encabezado fijo del mensaje de suplencias. */
+  private peticionDeApoyo(location: { name: string; address: string | null }): string {
+    return (
+      'Queridos hermanos. Requerimos su apoyo para cubrir las siguientes necesidades en el ' +
+      `*${this.ubicacion(location)}* en los siguientes turnos:`
+    );
+  }
+
+  /** «Pto. 3 Chipitlan, Secundaria #4», o solo el nombre si no hay dirección. */
+  private ubicacion(location: { name: string; address: string | null }): string {
+    const direccion = location.address?.trim();
+    return direccion ? `${location.name}, ${direccion}` : location.name;
   }
 }

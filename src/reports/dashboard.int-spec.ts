@@ -530,6 +530,51 @@ describe('Tablero de administradores (integración)', () => {
       expect(borrador.options[0].date).toBe('2026-08-30');
     });
 
+    it('pide el apoyo del grupo de suplencias nombrando el punto y su dirección', async () => {
+      const location = await createLocation(ctx.prisma, {
+        name: 'Pto. 3 Chipitlan',
+        address: 'Secundaria #4',
+      });
+      await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        capacity: 1,
+      });
+
+      const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
+
+      // Es la redacción acordada, palabra por palabra: el grupo de suplencias no
+      // es el del punto y el mensaje tiene que decir a dónde habría que llegar.
+      expect(borrador.substitutesText).toBe(
+        'Queridos hermanos. Requerimos su apoyo para cubrir las siguientes necesidades en el ' +
+          '*Pto. 3 Chipitlan, Secundaria #4* en los siguientes turnos:\n\n' +
+          'Dom. 30 de *07:00 a 09:00 am* (Un(a) Participante)',
+      );
+    });
+
+    it('usa solo el nombre del punto cuando no tiene dirección registrada', async () => {
+      const location = await createLocation(ctx.prisma, { name: 'Pto. 3 Chipitlan' });
+      await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        capacity: 1,
+      });
+
+      const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
+
+      expect(borrador.substitutesText.split('\n')[0]).toBe(
+        'Queridos hermanos. Requerimos su apoyo para cubrir las siguientes necesidades en el ' +
+          '*Pto. 3 Chipitlan* en los siguientes turnos:',
+      );
+    });
+
+    it('no pide apoyo a las suplencias cuando no hay nada que cubrir', async () => {
+      const { location } = await escenario(3);
+
+      const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
+
+      expect(borrador.substitutesText).not.toContain('Requerimos su apoyo');
+      expect(borrador.substitutesText).toContain('no hay turnos por cubrir');
+    });
+
     it('lo dice con claridad cuando no hace falta cubrir nada', async () => {
       const { location } = await escenario(3);
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);

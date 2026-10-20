@@ -7,6 +7,8 @@ export const TZ = 'America/Mexico_City';
 export async function createLocation(
   prisma: PrismaService,
   overrides: Partial<{
+    name: string;
+    address: string;
     minCapacity: number;
     defaultCapacity: number;
     maxCapacity: number;
@@ -15,7 +17,8 @@ export async function createLocation(
 ) {
   return prisma.location.create({
     data: {
-      name: 'Punto de prueba',
+      name: overrides.name ?? 'Punto de prueba',
+      address: overrides.address ?? null,
       timezone: TZ,
       defaultCapacity: overrides.defaultCapacity ?? 3,
       minCapacity: overrides.minCapacity ?? 2,
