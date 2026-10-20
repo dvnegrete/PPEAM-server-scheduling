@@ -5,6 +5,7 @@ import {
   CoverageRequestStatus,
   ShiftStatus,
 } from '@prisma/client';
+import { etiquetaDe } from '../audit/audit-catalog';
 import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -580,7 +581,10 @@ export class ReportsService {
         description = `Se decidió mantener el turno${turno ? ` ${turno}` : ''}`;
         break;
       default:
-        description = log.action;
+        // Las nueve de arriba llevan frase propia porque el tablero las muestra
+        // en contexto; para el resto basta el nombre de la acción, que el
+        // catálogo resuelve en un solo sitio.
+        description = etiquetaDe(log.action);
     }
 
     return {
