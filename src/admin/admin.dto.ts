@@ -13,6 +13,7 @@ import {
   MinLength,
   ValidateNested,
 } from 'class-validator';
+import { AUDIT_CATEGORY_IDS, type AuditCategoryId } from '../audit/audit-catalog';
 import { CANCEL_REASON_CODES } from '../scheduling/assignments.service';
 
 export class LoginDto {
@@ -192,6 +193,41 @@ export class RangeQueryDto {
   @IsString()
   @IsNotEmpty({ message: 'Falta la fecha final' })
   to!: string;
+}
+
+export class AuditQueryDto {
+  /** Si falta, la bitácora arranca en lo más reciente. */
+  @IsOptional()
+  @IsString()
+  from?: string;
+
+  @IsOptional()
+  @IsString()
+  to?: string;
+
+  @IsOptional()
+  @IsIn([...AUDIT_CATEGORY_IDS], {
+    message: `La categoría debe ser una de: ${AUDIT_CATEGORY_IDS.join(', ')}`,
+  })
+  categoria?: AuditCategoryId;
+
+  @IsOptional()
+  @IsString()
+  persona?: string;
+
+  /** Lo devuelve la página anterior; no se construye a mano. */
+  @IsOptional()
+  @IsString()
+  cursor?: string;
+
+  // Con tope, porque antes era `Number(limit)`: un `?limit=abc` entraba como
+  // NaN y un `?limit=99999` se servía entero.
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(100)
+  limit?: number = 50;
 }
 
 export class PollDraftQueryDto extends RangeQueryDto {

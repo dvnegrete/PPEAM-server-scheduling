@@ -1,10 +1,18 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import {
   AssignmentOrigin,
   AssignmentStatus,
   CoverageRequestStatus,
+  Prisma,
   ShiftStatus,
 } from '@prisma/client';
+import {
+  ACCIONES_SENSIBLES,
+  AUDIT_CATEGORIES,
+  type AuditCategoryId,
+  categoriaDe,
+  etiquetaDe,
+} from '../audit/audit-catalog';
 import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -130,14 +138,43 @@ export interface DashboardResult {
   days: DashboardDay[];
 }
 
-export interface AuditFilters {
-  entity?: string;
-  entityId?: string;
-  action?: string;
-  actorId?: string;
+/** Una fila de la bitácora, ya resuelta para mostrarse. */
+export interface AuditHistoryEntry {
+  id: string;
+  at: string;
+  action: string;
+  /** Nombre de la acción, del catálogo. */
+  label: string;
+  category: AuditCategoryId | null;
+  /** Quién la hizo: «el sistema», o el nombre del actor. */
+  by: string;
+  actorType: string;
+  /**
+   * Frase contextual para las acciones que la tienen —las de turnos—; para el
+   * resto es la etiqueta. Nunca una clave técnica.
+   */
+  description: string;
+  participantName: string | null;
+  shiftLabel: string | null;
+  reason: string | null;
+}
+
+export interface AuditHistoryPage {
+  entries: AuditHistoryEntry[];
+  /** Con qué seguir hacia atrás; `null` cuando ya no hay más. */
+  nextCursor: string | null;
+}
+
+export interface AuditHistoryQuery {
   from?: Date;
   to?: Date;
-  limit?: number;
+  categoria?: AuditCategoryId;
+  /** Nombre o parte del nombre de una persona, en cualquier orden. */
+  persona?: string;
+  cursor?: string;
+  limit: number;
+  /** Las entradas de accesos y cuentas solo las ve un administrador. */
+  verSensibles: boolean;
 }
 
 /**
@@ -152,19 +189,127 @@ export class ReportsService {
     private readonly time: TimeService,
   ) {}
 
-  /** Bitácora filtrable: quién hizo qué y cuándo. */
-  async auditTrail(filters: AuditFilters = {}) {
-    return this.prisma.auditLog.findMany({
-      where: {
-        entity: filters.entity,
-        entityId: filters.entityId,
-        action: filters.action,
-        actorId: filters.actorId,
-        createdAt: filters.from || filters.to ? { gte: filters.from, lte: filters.to } : undefined,
-      },
-      orderBy: { createdAt: 'desc' },
-      take: filters.limit ?? 100,
+  /**
+   * Bitácora completa, de lo más reciente hacia atrás y por páginas.
+   *
+   * Avanza por cursor y no por `skip` porque la bitácora crece mientras se
+   * navega: con un desplazamiento, una entrada nueva correría todo y la página
+   * siguiente repetiría o se saltaría filas.
+   */
+  async auditHistory(query: AuditHistoryQuery): Promise<AuditHistoryPage> {
+    const condiciones: Prisma.AuditLogWhereInput[] = [];
+
+    if (query.from || query.to) {
+      condiciones.push({ createdAt: { gte: query.from, lte: query.to } });
+    }
+    if (query.categoria) {
+      condiciones.push({ action: { in: [...AUDIT_CATEGORIES[query.categoria].actions] } });
+    }
+    if (!query.verSensibles) {
+      condiciones.push({ NOT: { action: { in: [...ACCIONES_SENSIBLES] } } });
+    }
+
+    const cursor = parseCursor(query.cursor);
+    if (cursor) {
+      // El id desempata las entradas con el mismo instante, que las hay: varias
+      // acciones se registran dentro de una misma transacción.
+      condiciones.push({
+        OR: [
+          { createdAt: { lt: cursor.at } },
+          { AND: [{ createdAt: cursor.at }, { id: { lt: cursor.id } }] },
+        ],
+      });
+    }
+
+    if (query.persona) {
+      condiciones.push(await this.filtroDePersona(query.persona));
+    }
+
+    const logs = await this.prisma.auditLog.findMany({
+      where: condiciones.length > 0 ? { AND: condiciones } : {},
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      // Una fila de más es lo que delata que hay página siguiente, sin un count.
+      take: query.limit + 1,
     });
+
+    const hayMas = logs.length > query.limit;
+    const pagina = hayMas ? logs.slice(0, query.limit) : logs;
+    const ultima = pagina.at(-1);
+
+    return {
+      entries: pagina.map((log) => this.toHistoryEntry(log)),
+      nextCursor: hayMas && ultima ? `${ultima.createdAt.toISOString()}|${ultima.id}` : null,
+    };
+  }
+
+  /**
+   * El nombre de una persona aparece en tres sitios según la acción: como actor
+   * de lo que hizo, como entidad de lo que le pasó, y dentro de `metadata`
+   * cuando la entidad es la asignación y no ella. Se buscan los tres.
+   *
+   * El texto se parte en palabras y se exigen todas, para que «López Ana»
+   * encuentre lo mismo que «Ana López».
+   */
+  private async filtroDePersona(persona: string): Promise<Prisma.AuditLogWhereInput> {
+    const palabras = persona.trim().split(/\s+/).filter(Boolean).slice(0, 5);
+    if (palabras.length === 0) return {};
+
+    const participantes = await this.prisma.participant.findMany({
+      where: {
+        AND: palabras.map((palabra) => ({
+          OR: [
+            { firstName: { contains: palabra, mode: 'insensitive' as const } },
+            { paternalSurname: { contains: palabra, mode: 'insensitive' as const } },
+            { maternalSurname: { contains: palabra, mode: 'insensitive' as const } },
+            { displayName: { contains: palabra, mode: 'insensitive' as const } },
+          ],
+        })),
+      },
+      select: { id: true },
+      take: 200,
+    });
+
+    const ramas: Prisma.AuditLogWhereInput[] = [
+      {
+        AND: palabras.map((palabra) => ({ actorName: { contains: palabra, mode: 'insensitive' } })),
+      },
+      {
+        AND: palabras.map((palabra) => ({
+          metadata: { path: ['participantName'], string_contains: palabra },
+        })),
+      },
+    ];
+    if (participantes.length > 0) {
+      ramas.push({ entityId: { in: participantes.map((p) => p.id) } });
+    }
+
+    return { OR: ramas };
+  }
+
+  /** Reutiliza la redacción de los movimientos y le añade etiqueta y categoría. */
+  private toHistoryEntry(log: {
+    id: string;
+    action: string;
+    actorType: string;
+    actorName: string | null;
+    createdAt: Date;
+    metadata: unknown;
+    after: unknown;
+  }): AuditHistoryEntry {
+    const movimiento = this.toMovement(log);
+    return {
+      id: movimiento.id,
+      at: movimiento.at,
+      action: movimiento.action,
+      label: etiquetaDe(log.action),
+      category: categoriaDe(log.action),
+      by: movimiento.by,
+      actorType: log.actorType,
+      description: movimiento.description,
+      participantName: movimiento.participantName,
+      shiftLabel: movimiento.shiftLabel,
+      reason: movimiento.reason ?? movimiento.reasonCode,
+    };
   }
 
   /** Participación de cada persona en un periodo. */
@@ -580,7 +725,10 @@ export class ReportsService {
         description = `Se decidió mantener el turno${turno ? ` ${turno}` : ''}`;
         break;
       default:
-        description = log.action;
+        // Las nueve de arriba llevan frase propia porque el tablero las muestra
+        // en contexto; para el resto basta el nombre de la acción, que el
+        // catálogo resuelve en un solo sitio.
+        description = etiquetaDe(log.action);
     }
 
     return {
@@ -595,4 +743,21 @@ export class ReportsService {
       at: log.createdAt.toISOString(),
     };
   }
+}
+
+/**
+ * `<ISO>|<id>`. Un cursor ilegible se rechaza en vez de ignorarse: devolver
+ * silenciosamente la primera página haría creer que ya no hay más histórico.
+ */
+function parseCursor(raw?: string): { at: Date; id: string } | null {
+  if (!raw) return null;
+  const corte = raw.indexOf('|');
+  if (corte <= 0) throw new BadRequestException('El cursor no tiene el formato esperado');
+
+  const at = new Date(raw.slice(0, corte));
+  const id = raw.slice(corte + 1);
+  if (Number.isNaN(at.getTime()) || id.length === 0) {
+    throw new BadRequestException('El cursor no tiene el formato esperado');
+  }
+  return { at, id };
 }

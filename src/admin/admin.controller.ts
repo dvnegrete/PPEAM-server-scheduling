@@ -38,6 +38,7 @@ import {
   ImportDto,
   LoginDto,
   MonthQueryDto,
+  AuditQueryDto,
   PollDraftQueryDto,
   RangeQueryDto,
   UpdateSettingsDto,
@@ -663,20 +664,24 @@ export class AdminController {
     return this.reports.attendance(id, new Date(from), new Date(to));
   }
 
+  /**
+   * Histórico completo, de lo más reciente hacia atrás.
+   *
+   * Sin `@SoloAdmin()`: el encargado también consulta la bitácora, y lo que no
+   * debe ver —accesos y cuentas— se descarta aquí, según el rol del token, no
+   * según lo que el panel decida pintar.
+   */
   @Get('audit')
   @UseGuards(AdminAuthGuard)
-  @SoloAdmin()
-  audit(
-    @Query('entity') entity?: string,
-    @Query('entityId') entityId?: string,
-    @Query('action') action?: string,
-    @Query('limit') limit?: string,
-  ) {
-    return this.reports.auditTrail({
-      entity,
-      entityId,
-      action,
-      limit: limit ? Number(limit) : undefined,
+  audit(@Query() query: AuditQueryDto, @CurrentAdmin() admin: AdminTokenPayload) {
+    return this.reports.auditHistory({
+      from: query.from ? new Date(query.from) : undefined,
+      to: query.to ? new Date(query.to) : undefined,
+      categoria: query.categoria,
+      persona: query.persona,
+      cursor: query.cursor,
+      limit: query.limit ?? 50,
+      verSensibles: admin.role === AdminRole.ADMIN,
     });
   }
 }
