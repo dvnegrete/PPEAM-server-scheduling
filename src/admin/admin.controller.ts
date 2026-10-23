@@ -41,6 +41,7 @@ import {
   AuditQueryDto,
   PollDraftQueryDto,
   RangeQueryDto,
+  UpdateLocationDto,
   UpdateSettingsDto,
 } from './admin.dto';
 import { AdminAuthService, AdminTokenPayload } from './auth.service';
@@ -637,6 +638,14 @@ export class AdminController {
       new Date(query.to),
       query.level ?? 'cupo',
     );
+  }
+
+  /** Nombre y dirección del punto: la cabecera del panel y el mensaje del grupo. */
+  @Patch('locations/:id')
+  @UseGuards(AdminAuthGuard)
+  @SoloAdmin()
+  updateLocation(@Param('id') id: string, @Body() dto: UpdateLocationDto) {
+    return this.settings.updateIdentity(id, dto);
   }
 
   @Get('locations/:id/settings')

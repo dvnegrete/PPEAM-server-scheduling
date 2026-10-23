@@ -9,6 +9,7 @@ import {
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
   MinLength,
   ValidateNested,
@@ -465,6 +466,21 @@ export class CreateWindowDto {
   @Min(0)
   @Max(1440)
   endMinute!: number;
+}
+
+/** Nombre y dirección del punto; ambos opcionales para poder tocar solo uno. */
+export class UpdateLocationDto {
+  @IsOptional()
+  @IsString()
+  @IsNotEmpty({ message: 'El nombre del punto es obligatorio' })
+  @MaxLength(120)
+  name?: string;
+
+  // Admite null explícito para borrar la dirección registrada.
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  address?: string | null;
 }
 
 export class UpdateSettingsDto {

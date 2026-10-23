@@ -1,4 +1,4 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Location } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -38,6 +38,47 @@ export class SettingsService {
       throw new NotFoundException(`No existe el punto de exhibición ${locationId}`);
     }
     return this.resolve(location);
+  }
+
+  /**
+   * Nombre y dirección del punto, que es lo que identifica al exhibidor ante
+   * quien lo lee: la cabecera del panel y el mensaje que se publica en el grupo
+   * de suplencias salen de aquí.
+   */
+  async updateIdentity(
+    locationId: string,
+    datos: { name?: string; address?: string | null },
+  ): Promise<Location> {
+    const data: { name?: string; address?: string | null } = {};
+
+    if (datos.name !== undefined) {
+      const name = datos.name.trim();
+      if (name.length === 0) {
+        throw new BadRequestException('El nombre del punto no puede quedar vacío');
+      }
+      data.name = name;
+    }
+
+    // Una dirección en blanco se guarda como ausente, no como cadena vacía: lo
+    // que la lee decide entre nombrarla o no, y «, » suelto no es una dirección.
+    if (datos.address !== undefined) {
+      const address = datos.address?.trim();
+      data.address = address ? address : null;
+    }
+
+    if (Object.keys(data).length === 0) {
+      return this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
+    }
+
+    const location = await this.prisma.location.findUnique({
+      where: { id: locationId },
+      select: { id: true },
+    });
+    if (!location) {
+      throw new NotFoundException(`No existe el punto de exhibición ${locationId}`);
+    }
+
+    return this.prisma.location.update({ where: { id: locationId }, data });
   }
 
   /** Actualiza solo las claves recibidas, conservando el resto. */
