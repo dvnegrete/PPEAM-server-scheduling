@@ -79,7 +79,11 @@ export interface Movement {
 export interface DashboardShift {
   id: string;
   date: string;
+  /** «7:00 a 9:00», en 24 h. El panel solo lo usa de respaldo. */
   range: string;
+  /** Minutos desde la medianoche local: con ellos el panel redacta la hora. */
+  startMinute: number;
+  endMinute: number;
   startsAt: string;
   status: ShiftStatus;
   capacity: number;
@@ -477,6 +481,8 @@ export class ReportsService {
       id: shift.id,
       date: shift.date.toISOString().slice(0, 10),
       range: this.time.formatRange(shift.startMinute, shift.endMinute),
+      startMinute: shift.startMinute,
+      endMinute: shift.endMinute,
       status: shift.status,
       capacity: shift.capacity,
       occupied: shift.assignments.length,
@@ -560,6 +566,8 @@ export class ReportsService {
         id: shift.id,
         date: fecha,
         range: this.time.formatRange(shift.startMinute, shift.endMinute),
+        startMinute: shift.startMinute,
+        endMinute: shift.endMinute,
         startsAt: shift.startsAt.toISOString(),
         status: shift.status,
         capacity: shift.capacity,

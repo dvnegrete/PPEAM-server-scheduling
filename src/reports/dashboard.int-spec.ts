@@ -376,6 +376,23 @@ describe('Tablero de administradores (integración)', () => {
       expect(tablero.days[0].shifts).toHaveLength(2);
       expect(tablero.days[0].label).toContain('domingo 30 de agosto');
     });
+
+    // El panel redacta la hora a su manera —en 12 h— y para eso necesita los
+    // minutos, no el texto ya armado.
+    it('trae los minutos del turno, además del rango ya escrito', async () => {
+      const location = await createLocation(ctx.prisma);
+      await createShift(ctx.prisma, location.id, {
+        startsAt: new Date('2026-08-30T13:00:00.000Z'),
+        startMinute: 7 * 60,
+      });
+
+      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      expect(tablero.days[0].shifts[0]).toMatchObject({
+        range: '7:00 a 9:00',
+        startMinute: 420,
+        endMinute: 540,
+      });
+    });
   });
 
   describe('historial de movimientos', () => {
