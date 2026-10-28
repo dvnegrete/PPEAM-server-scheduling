@@ -53,6 +53,7 @@ export const AUDIT_CATEGORIES: Record<AuditCategoryId, AuditCategory> = {
       A.COVERAGE_DECLINED,
       A.COVERAGE_AUTO_APPROVED,
       A.COVERAGE_EXPIRED,
+      A.COVERAGE_ANNOUNCED,
     ],
   },
   encargados: {
@@ -124,6 +125,7 @@ const ETIQUETAS: Record<AuditAction, string> = {
   [A.COVERAGE_DECLINED]: 'Ofrecimiento descartado',
   [A.COVERAGE_AUTO_APPROVED]: 'Cobertura aprobada por el sistema',
   [A.COVERAGE_EXPIRED]: 'Vacante vencida',
+  [A.COVERAGE_ANNOUNCED]: 'Confirmación publicada en el grupo',
   [A.TASK_CREATED]: 'Solicitud creada',
   [A.TASK_CLAIMED]: 'Solicitud tomada',
   [A.TASK_RESOLVED]: 'Solicitud atendida',
