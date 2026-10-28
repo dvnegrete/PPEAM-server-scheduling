@@ -4,8 +4,8 @@ import { createFullTestContext, resetDatabase, TestContext } from '../../test/he
 import { ReportsService } from './reports.service';
 
 /**
- * Noviembre de 2026 empieza en domingo: el domingo 1 queda como un fin de semana
- * suelto y luego vienen sábado 7 y domingo 8 juntos.
+ * Noviembre de 2026 empieza en domingo: el primer domingo (1) cae antes que el
+ * primer sábado (7), y el domingo 8 ya es el segundo domingo.
  */
 const NOW = new Date('2026-10-27T18:00:00.000Z');
 
@@ -77,38 +77,34 @@ describe('Rol del mes (integración)', () => {
     return { location };
   }
 
-  it('resume entre semana con los titulares, aunque uno haya cancelado una fecha', async () => {
+  it('pone un bloque por día entre semana con los titulares, aunque uno cancele una fecha', async () => {
     const { location } = await escenario();
     const rol = await reports.monthRoster(location.id, 2026, 11);
 
-    expect(rol.weekdays).toHaveLength(1);
-    expect(rol.weekdays[0].days[1].people.map((p) => p.name)).toEqual([
-      'Ana López',
-      'Beto Ruiz',
-      'Carla Díaz',
-    ]);
-    expect(rol.weekdays[0].days[1].people[0].phone).toMatch(/^55 \d{4} \d{4}$/);
+    expect(rol.weekdays.map((dia) => dia.title)).toEqual(['Lunes']);
+    const turno = rol.weekdays[0].slots[0];
+    expect(turno.range).toBe('07:00 a 09:00 am');
+    expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz', 'Carla Díaz']);
+    expect(turno.people[0].phone).toMatch(/^55 \d{4} \d{4}$/);
   });
 
-  it('lista solo la fecha que cambió, con quién sí asiste', async () => {
+  it('ordena los fines de semana por ordinal, el sábado antes que el domingo', async () => {
     const { location } = await escenario();
     const rol = await reports.monthRoster(location.id, 2026, 11);
 
-    expect(rol.weekdayChanges).toHaveLength(1);
-    expect(rol.weekdayChanges[0]).toMatchObject({ date: '2026-11-09', missing: 1 });
-    expect(rol.weekdayChanges[0].attendees.map((p) => p.name)).toEqual(['Ana López', 'Carla Díaz']);
+    expect(rol.weekends.map((dia) => [dia.title, dia.subtitle])).toEqual([
+      ['Primer sábado', '7 de noviembre de 2026'],
+      ['Primer domingo', '1 de noviembre de 2026'],
+      ['Segundo domingo', '8 de noviembre de 2026'],
+    ]);
   });
 
-  it('agrupa los fines de semana y deja fuera a quien canceló', async () => {
+  it('deja fuera del fin de semana a quien canceló', async () => {
     const { location } = await escenario();
     const rol = await reports.monthRoster(location.id, 2026, 11);
 
-    expect(rol.weekends.map((w) => w.days.map((d) => d.date))).toEqual([
-      ['2026-11-01'],
-      ['2026-11-07', '2026-11-08'],
-    ]);
-    const sabado = rol.weekends[1].days[0];
-    expect(sabado.slots[0].people.map((p) => p.name)).toEqual(['Ana López']);
-    expect(sabado.slots[0].missing).toBe(2);
+    const sabado = rol.weekends[0].slots[0];
+    expect(sabado.people.map((p) => p.name)).toEqual(['Ana López']);
+    expect(sabado.missing).toBe(2);
   });
 });

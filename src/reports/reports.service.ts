@@ -182,6 +182,9 @@ export interface AuditHistoryQuery {
   verSensibles: boolean;
 }
 
+const DIAS_DEL_ROL = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+const ORDINALES_DEL_ROL = ['', 'Primer', 'Segundo', 'Tercer', 'Cuarto', 'Quinto'];
+
 /** Una persona tal como aparece en el rol del mes. */
 export interface RosterPerson {
   /** «Ana María López»: dos nombres como máximo y el apellido paterno. */
@@ -190,37 +193,25 @@ export interface RosterPerson {
   phone: string;
 }
 
-/** Franja de lunes a viernes: quién la cubre cada semana, por día. */
-export interface RosterWeekdaySlot {
+/** Un turno del rol: el horario y quién va. */
+export interface RosterSlot {
   startMinute: number;
+  /** «07:00 a 09:00 am». */
   range: string;
-  /** Clave: día de la semana, 1 = lunes … 5 = viernes. */
-  days: Record<number, { people: RosterPerson[]; missing: number }>;
-}
-
-/** Una fecha entre semana en la que no va la gente de siempre. */
-export interface RosterWeekdayChange {
-  date: string;
-  label: string;
-  range: string;
-  /** Quién sí asiste ese día; quien canceló simplemente no aparece. */
-  attendees: RosterPerson[];
+  people: RosterPerson[];
+  /** Lugares que faltan para completar el cupo. */
   missing: number;
-  /** El turno entero se canceló ese día. */
-  cancelled: boolean;
 }
 
-export interface RosterWeekendDay {
-  date: string;
-  /** «Sábado 7». */
-  label: string;
-  slots: { startMinute: number; range: string; people: RosterPerson[]; missing: number }[];
-}
-
-export interface RosterWeekend {
-  /** «Sáb. 7 · Dom. 8 de noviembre». */
-  label: string;
-  days: RosterWeekendDay[];
+/**
+ * Un bloque del rol: un día entre semana («Lunes», válido para todo el mes) o
+ * una fecha de fin de semana («Primer sábado», «7 de noviembre de 2026»).
+ */
+export interface RosterDay {
+  title: string;
+  /** La fecha, solo en fines de semana. */
+  subtitle: string | null;
+  slots: RosterSlot[];
 }
 
 export interface RosterMonth {
@@ -229,9 +220,10 @@ export interface RosterMonth {
   month: number;
   /** «noviembre 2026». */
   monthLabel: string;
-  weekdays: RosterWeekdaySlot[];
-  weekdayChanges: RosterWeekdayChange[];
-  weekends: RosterWeekend[];
+  /** Lunes a viernes, en ese orden. */
+  weekdays: RosterDay[];
+  /** Primer sábado, primer domingo, segundo sábado, … */
+  weekends: RosterDay[];
 }
 
 /**
@@ -552,11 +544,10 @@ export class ReportsService {
   /**
    * Rol del mes para compartir en el grupo.
    *
-   * Entre semana los turnos se repiten idénticos cada semana, así que se resumen
-   * en una sola tabla con los titulares, y aparte se listan solo las fechas en
-   * que la gente real difiere de esa tabla (alguien canceló, alguien cubre). El
-   * fin de semana cambia de gente según el ordinal del mes, así que va fecha por
-   * fecha. En ambos casos quien canceló ya no figura.
+   * Entre semana los turnos se repiten idénticos cada semana, así que va un
+   * bloque por día con sus titulares. El fin de semana cambia de gente según el
+   * ordinal del mes, así que va fecha por fecha: primer sábado, primer domingo,
+   * segundo sábado… En el fin de semana quien canceló ya no figura.
    */
   async monthRoster(locationId: string, year: number, month: number): Promise<RosterMonth> {
     const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
@@ -593,15 +584,13 @@ export class ReportsService {
       phone: formatNationalPhone(participant.phoneE164),
     });
     const porNombre = (a: RosterPerson, b: RosterPerson) => a.name.localeCompare(b.name, 'es');
-    const ocupantes = (shift: RosterShift) =>
-      shift.status === ShiftStatus.CANCELLED
-        ? []
-        : shift.assignments.filter((assignment) => OCCUPYING_STATUSES.includes(assignment.status));
     const range = (shift: RosterShift) =>
       this.time.formatRange12(shift.startMinute, shift.endMinute);
     const weekdayOf = (shift: RosterShift) => this.time.weekday(shift.date, 'utc');
 
     // --- Entre semana -------------------------------------------------------
+    // Titular es quien tiene el turno fijo en la mayoría de las fechas, haya
+    // cancelado alguna o no: una baja aislada no lo saca del rol del mes.
     const porFranja = new Map<string, RosterShift[]>();
     for (const shift of shifts) {
       const dia = weekdayOf(shift);
@@ -610,112 +599,83 @@ export class ReportsService {
       porFranja.set(clave, [...(porFranja.get(clave) ?? []), shift]);
     }
 
-    const weekdaySlots = new Map<number, RosterWeekdaySlot>();
-    const weekdayChanges: RosterWeekdayChange[] = [];
+    const weekdays: RosterDay[] = [];
+    for (const dia of [1, 2, 3, 4, 5] as const) {
+      const slots: RosterSlot[] = [];
+      for (const grupo of porFranja.values()) {
+        const muestra = grupo[0];
+        if (weekdayOf(muestra) !== dia) continue;
 
-    for (const grupo of porFranja.values()) {
-      const muestra = grupo[0];
-      const dia = weekdayOf(muestra);
-
-      // Titular es quien tiene el turno fijo en la mayoría de las fechas, haya
-      // cancelado alguna o no: una baja aislada no lo saca de la tabla.
-      const fijos = new Map<string, { participant: RosterParticipant; veces: number }>();
-      for (const shift of grupo) {
-        for (const assignment of shift.assignments) {
-          if (assignment.origin !== AssignmentOrigin.FIXED) continue;
-          const previo = fijos.get(assignment.participantId);
-          fijos.set(assignment.participantId, {
-            participant: assignment.participant,
-            veces: (previo?.veces ?? 0) + 1,
-          });
+        const fijos = new Map<string, { participant: RosterParticipant; veces: number }>();
+        for (const shift of grupo) {
+          for (const assignment of shift.assignments) {
+            if (assignment.origin !== AssignmentOrigin.FIXED) continue;
+            const previo = fijos.get(assignment.participantId);
+            fijos.set(assignment.participantId, {
+              participant: assignment.participant,
+              veces: (previo?.veces ?? 0) + 1,
+            });
+          }
         }
-      }
-      const titulares = [...fijos.entries()].filter(([, fijo]) => fijo.veces * 2 > grupo.length);
-      const base = new Set(titulares.map(([id]) => id));
-      const capacidad = Math.max(...grupo.map((shift) => shift.capacity));
+        const titulares = [...fijos.values()].filter((fijo) => fijo.veces * 2 > grupo.length);
+        const capacidad = Math.max(...grupo.map((shift) => shift.capacity));
 
-      if (!weekdaySlots.has(muestra.startMinute)) {
-        weekdaySlots.set(muestra.startMinute, {
+        slots.push({
           startMinute: muestra.startMinute,
           range: range(muestra),
-          days: {},
+          people: titulares.map((fijo) => persona(fijo.participant)).sort(porNombre),
+          missing: Math.max(0, capacidad - titulares.length),
         });
       }
-      weekdaySlots.get(muestra.startMinute)!.days[dia] = {
-        people: titulares.map(([, fijo]) => persona(fijo.participant)).sort(porNombre),
-        missing: Math.max(0, capacidad - titulares.length),
-      };
-
-      for (const shift of grupo) {
-        const presentes = ocupantes(shift);
-        const igual =
-          presentes.length === base.size &&
-          presentes.every((assignment) => base.has(assignment.participantId));
-        if (igual) continue;
-        weekdayChanges.push({
-          date: shift.date.toISOString().slice(0, 10),
-          label: this.time.formatDayShort(shift.date, location.timezone),
-          range: range(shift),
-          attendees: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
-          missing: Math.max(0, shift.capacity - presentes.length),
-          cancelled: shift.status === ShiftStatus.CANCELLED,
-        });
-      }
+      if (slots.length === 0) continue;
+      weekdays.push({
+        title: DIAS_DEL_ROL[dia],
+        subtitle: null,
+        slots: slots.sort((a, b) => a.startMinute - b.startMinute),
+      });
     }
 
-    weekdayChanges.sort((a, b) => a.date.localeCompare(b.date) || a.range.localeCompare(b.range));
-
     // --- Fines de semana ----------------------------------------------------
-    const weekends: RosterWeekend[] = [];
-    let ultimoDia: RosterWeekendDay | null = null;
-    let ultimaFecha: string | null = null;
-
+    const porFecha = new Map<string, RosterShift[]>();
     for (const shift of shifts) {
       const dia = weekdayOf(shift);
       if (dia !== 0 && dia !== 6) continue;
       if (shift.status === ShiftStatus.CANCELLED) continue;
-
       const fecha = shift.date.toISOString().slice(0, 10);
-      if (fecha !== ultimaFecha) {
-        const local = this.time.toLocalDate(shift.date, location.timezone).setLocale('es-MX');
-        ultimoDia = {
-          date: fecha,
-          label: `${local.toFormat('cccc').replace(/^./, (letra) => letra.toUpperCase())} ${local.day}`,
-          slots: [],
+      porFecha.set(fecha, [...(porFecha.get(fecha) ?? []), shift]);
+    }
+
+    const fechas = [...porFecha.values()].map((grupo) => {
+      const local = this.time.toLocalDate(grupo[0].date, location.timezone).setLocale('es-MX');
+      const dia = weekdayOf(grupo[0]);
+      return { grupo, local, dia, ordinal: this.time.ordinalOfMonth(local) };
+    });
+    // Como se organizan los turnos fijos: por ordinal, y el sábado antes que el
+    // domingo de ese mismo ordinal aunque en el calendario caiga después.
+    fechas.sort((a, b) => a.ordinal - b.ordinal || (a.dia === 6 ? -1 : 1) - (b.dia === 6 ? -1 : 1));
+
+    const weekends: RosterDay[] = fechas.map(({ grupo, local, dia, ordinal }) => ({
+      title: `${ORDINALES_DEL_ROL[ordinal]} ${dia === 6 ? 'sábado' : 'domingo'}`,
+      subtitle: local.toFormat("d 'de' LLLL 'de' yyyy"),
+      slots: grupo.map((shift) => {
+        const presentes = shift.assignments.filter((assignment) =>
+          OCCUPYING_STATUSES.includes(assignment.status),
+        );
+        return {
+          startMinute: shift.startMinute,
+          range: range(shift),
+          people: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
+          missing: Math.max(0, shift.capacity - presentes.length),
         };
-        // El domingo se une al sábado de la víspera; si el mes empieza en
-        // domingo, ese domingo forma un fin de semana por sí solo.
-        const anterior = weekends.at(-1)?.days.at(-1);
-        const esVispera =
-          dia === 0 &&
-          anterior !== undefined &&
-          local.minus({ days: 1 }).toISODate() === anterior.date;
-        if (esVispera) weekends.at(-1)!.days.push(ultimoDia);
-        else weekends.push({ label: '', days: [ultimoDia] });
-        ultimaFecha = fecha;
-      }
-
-      const presentes = ocupantes(shift);
-      ultimoDia!.slots.push({
-        startMinute: shift.startMinute,
-        range: range(shift),
-        people: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
-        missing: Math.max(0, shift.capacity - presentes.length),
-      });
-    }
-
-    for (const weekend of weekends) {
-      const dias = weekend.days.map((dia) => this.time.formatDayShort(dia.date, location.timezone));
-      weekend.label = `${dias.join(' · ')} de ${start.setLocale('es-MX').toFormat('LLLL')}`;
-    }
+      }),
+    }));
 
     return {
       locationName: location.name,
       year,
       month,
       monthLabel: start.setLocale('es-MX').toFormat('LLLL yyyy'),
-      weekdays: [...weekdaySlots.values()].sort((a, b) => a.startMinute - b.startMinute),
-      weekdayChanges,
+      weekdays,
       weekends,
     };
   }
