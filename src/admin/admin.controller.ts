@@ -23,8 +23,10 @@ import { ScheduleGeneratorService } from '../scheduling/schedule-generator.servi
 import { AdminAuthGuard, PermitidoConCambioPendiente, SoloAdmin } from './admin-auth.guard';
 import { AdminUsersService } from './admin-users.service';
 import {
+  AnnounceConfirmationsDto,
   AssignParticipantDto,
   CancelAssignmentDto,
+  ConfirmationsQueryDto,
   ChangeOwnPasswordDto,
   CoverShiftDto,
   CreateAdminUserDto,
@@ -53,6 +55,7 @@ import {
   OrganizationFieldsService,
 } from '../participants/organization-fields.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
+import { ConfirmationsDraftService } from '../reports/confirmations-draft.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ThrottlerGuard } from '@nestjs/throttler';
@@ -78,6 +81,7 @@ export class AdminController {
     private readonly supervisors: SupervisorsService,
     private readonly assignments: AssignmentsService,
     private readonly pollDraft_: PollDraftService,
+    private readonly confirmations: ConfirmationsDraftService,
     private readonly organization: OrganizationFieldsService,
     private readonly recurring: RecurringAssignmentsService,
     private readonly profiles: ParticipantProfileService,
@@ -638,6 +642,32 @@ export class AdminController {
       new Date(query.to),
       query.level ?? 'cupo',
     );
+  }
+
+  /**
+   * A quién hay que confirmarle en el grupo que cubre un turno.
+   *
+   * Sin `@SoloAdmin()`: publicar ese mensaje es trabajo de los encargados.
+   */
+  @Get('locations/:id/confirmations-draft')
+  @UseGuards(AdminAuthGuard)
+  confirmationsDraft(@Param('id') id: string, @Query() query: ConfirmationsQueryDto) {
+    return this.confirmations.build(id, query.days);
+  }
+
+  /**
+   * El encargado declara que ya publicó el mensaje, para que esas personas no
+   * vuelvan a salir en el siguiente. Se guarda **después** de que lo confirme,
+   * nunca al copiar: entre una cosa y otra puede no llegar a pegarlo.
+   */
+  @Post('locations/:id/confirmations/announced')
+  @UseGuards(AdminAuthGuard)
+  announceConfirmations(
+    @Param('id') id: string,
+    @Body() dto: AnnounceConfirmationsDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    return this.confirmations.announce(id, dto.keys, { id: admin.sub, name: admin.name });
   }
 
   /** Nombre y dirección del punto: la cabecera del panel y el mensaje del grupo. */

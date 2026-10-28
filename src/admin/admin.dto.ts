@@ -1,5 +1,7 @@
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayNotEmpty,
   IsArray,
   IsBoolean,
   IsEmail,
@@ -235,6 +237,29 @@ export class PollDraftQueryDto extends RangeQueryDto {
   @IsOptional()
   @IsIn(['cupo', 'minimo'], { message: 'El nivel debe ser cupo o minimo' })
   level?: 'cupo' | 'minimo';
+}
+
+export class ConfirmationsQueryDto {
+  /** Cuántos días por delante se miran; 14 si no se dice otra cosa. */
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(60)
+  days?: number;
+}
+
+export class AnnounceConfirmationsDto {
+  /**
+   * Las claves que el encargado declaró como publicadas. Vienen del borrador y
+   * no se construyen a mano: el servicio rechaza cualquiera que no corresponda
+   * a una cobertura vigente del punto.
+   */
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Hay que indicar al menos una confirmación' })
+  @ArrayMaxSize(200)
+  @IsString({ each: true })
+  keys!: string[];
 }
 
 export class CancelAssignmentDto {

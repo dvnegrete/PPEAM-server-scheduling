@@ -17,6 +17,14 @@ export const AUDIT_ACTIONS = {
   COVERAGE_DECLINED: 'coverage.declined',
   COVERAGE_AUTO_APPROVED: 'coverage.auto_approved',
   COVERAGE_EXPIRED: 'coverage.expired',
+  /**
+   * Un encargado publicó en el grupo que esta persona cubre este turno.
+   *
+   * Mientras no haya API de WhatsApp, el mensaje lo pega una persona a mano, así
+   * que esta entrada es lo único que distingue lo ya anunciado de lo que falta
+   * por anunciar: sin ella, el mismo nombre saldría en dos mensajes seguidos.
+   */
+  COVERAGE_ANNOUNCED: 'coverage.announced',
   TASK_CREATED: 'task.created',
   TASK_CLAIMED: 'task.claimed',
   TASK_RESOLVED: 'task.resolved',
