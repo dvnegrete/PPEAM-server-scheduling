@@ -128,6 +128,41 @@ export class TimeService {
     return this.toLocalDate(date, timezone).setLocale('es-MX').toFormat("cccc d 'de' LLLL");
   }
 
+  /**
+   * "07:00 a 09:00 am", o "11:00 am a 01:00 pm".
+   *
+   * El reloj de 12 horas es como se habla de los turnos en el grupo, así que es
+   * el que usan los textos que se publican ahí. Con los dos extremos en la misma
+   * mitad del día basta decirlo una vez al final; solo cuando el turno cruza el
+   * mediodía hay que marcar los dos, que es donde se presta a confusión.
+   */
+  formatRange12(startMinute: number, endMinute: number): string {
+    const inicio = this.hour12(startMinute);
+    const fin = this.hour12(endMinute);
+    return inicio.meridiano === fin.meridiano
+      ? `${inicio.reloj} a ${fin.reloj} ${fin.meridiano}`
+      : `${inicio.reloj} ${inicio.meridiano} a ${fin.reloj} ${fin.meridiano}`;
+  }
+
+  /** "Jue. 15" — el día como se lee en una lista de turnos. */
+  formatDayShort(date: DateTime | Date | string, timezone: string): string {
+    const fecha = this.toLocalDate(date, timezone).setLocale('es-MX');
+    // Algunas versiones de Intl devuelven la abreviatura con punto y otras sin
+    // él, así que se normaliza antes de añadirlo.
+    const abreviatura = fecha.toFormat('ccc').replace(/\.$/, '');
+    return `${abreviatura.charAt(0).toUpperCase()}${abreviatura.slice(1)}. ${fecha.day}`;
+  }
+
+  /** "07:00" + "am" a partir de 420. No usa Luxon: `a` da «a. m.» en es-MX. */
+  private hour12(minuteOfDay: number): { reloj: string; meridiano: 'am' | 'pm' } {
+    const hora24 = Math.floor(minuteOfDay / 60) % 24;
+    const hora = hora24 % 12 === 0 ? 12 : hora24 % 12;
+    return {
+      reloj: `${String(hora).padStart(2, '0')}:${String(minuteOfDay % 60).padStart(2, '0')}`,
+      meridiano: hora24 < 12 ? 'am' : 'pm',
+    };
+  }
+
   /** "jueves 27 de agosto, 7:00 a 9:00" — la etiqueta que ve el participante. */
   formatShiftLabel(
     date: DateTime | Date | string,

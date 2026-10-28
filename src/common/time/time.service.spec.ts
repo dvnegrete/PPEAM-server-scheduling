@@ -109,6 +109,26 @@ describe('TimeService', () => {
       const label = service.formatShiftLabel('2026-08-27', 420, 540, TZ);
       expect(label).toBe('jueves 27 de agosto, 7:00 a 9:00');
     });
+
+    it('en 12 horas dice el meridiano una sola vez dentro de la misma mitad del día', () => {
+      expect(service.formatRange12(420, 540)).toBe('07:00 a 09:00 am');
+      expect(service.formatRange12(900, 1020)).toBe('03:00 a 05:00 pm');
+    });
+
+    it('marca los dos meridianos cuando el turno cruza el mediodía', () => {
+      expect(service.formatRange12(660, 780)).toBe('11:00 am a 01:00 pm');
+    });
+
+    it('resuelve el mediodía y la medianoche como las doce, no como cero', () => {
+      expect(service.formatRange12(0, 60)).toBe('12:00 a 01:00 am');
+      expect(service.formatRange12(720, 840)).toBe('12:00 a 02:00 pm');
+      expect(service.formatRange12(1140, 1440)).toBe('07:00 pm a 12:00 am');
+    });
+
+    it('abrevia el día con mayúscula y punto', () => {
+      expect(service.formatDayShort('2026-08-27', TZ)).toBe('Jue. 27');
+      expect(service.formatDayShort('2026-08-30', TZ)).toBe('Dom. 30');
+    });
   });
 
   describe('ventanas y urgencia', () => {
