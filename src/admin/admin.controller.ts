@@ -192,6 +192,12 @@ export class AdminController {
     return this.reports.monthCalendar(id, query.year, query.month);
   }
 
+  @Get('locations/:id/roster')
+  @UseGuards(AdminAuthGuard)
+  roster(@Param('id') id: string, @Query() query: MonthQueryDto) {
+    return this.reports.monthRoster(id, query.year, query.month);
+  }
+
   @Post('locations/:id/calendar/generate')
   @UseGuards(AdminAuthGuard)
   generate(@Param('id') id: string, @Body() body: MonthQueryDto) {

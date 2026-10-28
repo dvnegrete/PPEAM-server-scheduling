@@ -65,6 +65,18 @@ export function greetingName(person: PersonName): string {
   return person.firstName.trim().split(/\s+/)[0];
 }
 
+/**
+ * Para el rol del mes que se comparte en el grupo: `Ana María López`.
+ *
+ * Sale siempre del nombre de pila, con dos nombres como máximo, y del apellido
+ * paterno. No usa el nombre elegido: en el rol todos deben poder reconocerse por
+ * el mismo criterio, y un apodo no ayuda a quien busca a alguien en su teléfono.
+ */
+export function rosterName(person: PersonName): string {
+  const nombres = person.firstName.trim().split(/\s+/).slice(0, 2).join(' ');
+  return [nombres, person.paternalSurname.trim()].filter(Boolean).join(' ');
+}
+
 /** Orden de un padrón: apellido paterno, materno y luego nombre. */
 export const PADRON_ORDER = [
   { paternalSurname: 'asc' },

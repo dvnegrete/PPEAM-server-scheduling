@@ -13,7 +13,8 @@ import {
   categoriaDe,
   etiquetaDe,
 } from '../audit/audit-catalog';
-import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
+import { displayName, formalName, PADRON_ORDER, rosterName } from '../common/names/person-name';
+import { formatNationalPhone } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { OCCUPYING_STATUSES } from '../scheduling/shifts.service';
@@ -179,6 +180,58 @@ export interface AuditHistoryQuery {
   limit: number;
   /** Las entradas de accesos y cuentas solo las ve un administrador. */
   verSensibles: boolean;
+}
+
+/** Una persona tal como aparece en el rol del mes. */
+export interface RosterPerson {
+  /** «Ana María López»: dos nombres como máximo y el apellido paterno. */
+  name: string;
+  /** «55 1234 5678», para que cualquiera pueda llamar a su turno o al de al lado. */
+  phone: string;
+}
+
+/** Franja de lunes a viernes: quién la cubre cada semana, por día. */
+export interface RosterWeekdaySlot {
+  startMinute: number;
+  range: string;
+  /** Clave: día de la semana, 1 = lunes … 5 = viernes. */
+  days: Record<number, { people: RosterPerson[]; missing: number }>;
+}
+
+/** Una fecha entre semana en la que no va la gente de siempre. */
+export interface RosterWeekdayChange {
+  date: string;
+  label: string;
+  range: string;
+  /** Quién sí asiste ese día; quien canceló simplemente no aparece. */
+  attendees: RosterPerson[];
+  missing: number;
+  /** El turno entero se canceló ese día. */
+  cancelled: boolean;
+}
+
+export interface RosterWeekendDay {
+  date: string;
+  /** «Sábado 7». */
+  label: string;
+  slots: { startMinute: number; range: string; people: RosterPerson[]; missing: number }[];
+}
+
+export interface RosterWeekend {
+  /** «Sáb. 7 · Dom. 8 de noviembre». */
+  label: string;
+  days: RosterWeekendDay[];
+}
+
+export interface RosterMonth {
+  locationName: string;
+  year: number;
+  month: number;
+  /** «noviembre 2026». */
+  monthLabel: string;
+  weekdays: RosterWeekdaySlot[];
+  weekdayChanges: RosterWeekdayChange[];
+  weekends: RosterWeekend[];
 }
 
 /**
@@ -494,6 +547,177 @@ export class ReportsService {
         confirmed: assignment.status === AssignmentStatus.CONFIRMED,
       })),
     }));
+  }
+
+  /**
+   * Rol del mes para compartir en el grupo.
+   *
+   * Entre semana los turnos se repiten idénticos cada semana, así que se resumen
+   * en una sola tabla con los titulares, y aparte se listan solo las fechas en
+   * que la gente real difiere de esa tabla (alguien canceló, alguien cubre). El
+   * fin de semana cambia de gente según el ordinal del mes, así que va fecha por
+   * fecha. En ambos casos quien canceló ya no figura.
+   */
+  async monthRoster(locationId: string, year: number, month: number): Promise<RosterMonth> {
+    const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
+    const start = this.time
+      .nowInZone(location.timezone)
+      .set({ year, month, day: 1 })
+      .startOf('month');
+
+    const shifts = await this.prisma.shift.findMany({
+      where: {
+        locationId,
+        date: {
+          gte: this.time.toDateColumn(start),
+          lte: this.time.toDateColumn(start.endOf('month')),
+        },
+      },
+      include: {
+        assignments: {
+          include: {
+            participant: {
+              select: { id: true, firstName: true, paternalSurname: true, phoneE164: true },
+            },
+          },
+        },
+      },
+      orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
+    });
+
+    type RosterShift = (typeof shifts)[number];
+    type RosterParticipant = RosterShift['assignments'][number]['participant'];
+
+    const persona = (participant: RosterParticipant): RosterPerson => ({
+      name: rosterName(participant),
+      phone: formatNationalPhone(participant.phoneE164),
+    });
+    const porNombre = (a: RosterPerson, b: RosterPerson) => a.name.localeCompare(b.name, 'es');
+    const ocupantes = (shift: RosterShift) =>
+      shift.status === ShiftStatus.CANCELLED
+        ? []
+        : shift.assignments.filter((assignment) => OCCUPYING_STATUSES.includes(assignment.status));
+    const range = (shift: RosterShift) =>
+      this.time.formatRange12(shift.startMinute, shift.endMinute);
+    const weekdayOf = (shift: RosterShift) => this.time.weekday(shift.date, 'utc');
+
+    // --- Entre semana -------------------------------------------------------
+    const porFranja = new Map<string, RosterShift[]>();
+    for (const shift of shifts) {
+      const dia = weekdayOf(shift);
+      if (dia === 0 || dia === 6) continue;
+      const clave = `${dia}:${shift.startMinute}`;
+      porFranja.set(clave, [...(porFranja.get(clave) ?? []), shift]);
+    }
+
+    const weekdaySlots = new Map<number, RosterWeekdaySlot>();
+    const weekdayChanges: RosterWeekdayChange[] = [];
+
+    for (const grupo of porFranja.values()) {
+      const muestra = grupo[0];
+      const dia = weekdayOf(muestra);
+
+      // Titular es quien tiene el turno fijo en la mayoría de las fechas, haya
+      // cancelado alguna o no: una baja aislada no lo saca de la tabla.
+      const fijos = new Map<string, { participant: RosterParticipant; veces: number }>();
+      for (const shift of grupo) {
+        for (const assignment of shift.assignments) {
+          if (assignment.origin !== AssignmentOrigin.FIXED) continue;
+          const previo = fijos.get(assignment.participantId);
+          fijos.set(assignment.participantId, {
+            participant: assignment.participant,
+            veces: (previo?.veces ?? 0) + 1,
+          });
+        }
+      }
+      const titulares = [...fijos.entries()].filter(([, fijo]) => fijo.veces * 2 > grupo.length);
+      const base = new Set(titulares.map(([id]) => id));
+      const capacidad = Math.max(...grupo.map((shift) => shift.capacity));
+
+      if (!weekdaySlots.has(muestra.startMinute)) {
+        weekdaySlots.set(muestra.startMinute, {
+          startMinute: muestra.startMinute,
+          range: range(muestra),
+          days: {},
+        });
+      }
+      weekdaySlots.get(muestra.startMinute)!.days[dia] = {
+        people: titulares.map(([, fijo]) => persona(fijo.participant)).sort(porNombre),
+        missing: Math.max(0, capacidad - titulares.length),
+      };
+
+      for (const shift of grupo) {
+        const presentes = ocupantes(shift);
+        const igual =
+          presentes.length === base.size &&
+          presentes.every((assignment) => base.has(assignment.participantId));
+        if (igual) continue;
+        weekdayChanges.push({
+          date: shift.date.toISOString().slice(0, 10),
+          label: this.time.formatDayShort(shift.date, location.timezone),
+          range: range(shift),
+          attendees: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
+          missing: Math.max(0, shift.capacity - presentes.length),
+          cancelled: shift.status === ShiftStatus.CANCELLED,
+        });
+      }
+    }
+
+    weekdayChanges.sort((a, b) => a.date.localeCompare(b.date) || a.range.localeCompare(b.range));
+
+    // --- Fines de semana ----------------------------------------------------
+    const weekends: RosterWeekend[] = [];
+    let ultimoDia: RosterWeekendDay | null = null;
+    let ultimaFecha: string | null = null;
+
+    for (const shift of shifts) {
+      const dia = weekdayOf(shift);
+      if (dia !== 0 && dia !== 6) continue;
+      if (shift.status === ShiftStatus.CANCELLED) continue;
+
+      const fecha = shift.date.toISOString().slice(0, 10);
+      if (fecha !== ultimaFecha) {
+        const local = this.time.toLocalDate(shift.date, location.timezone).setLocale('es-MX');
+        ultimoDia = {
+          date: fecha,
+          label: `${local.toFormat('cccc').replace(/^./, (letra) => letra.toUpperCase())} ${local.day}`,
+          slots: [],
+        };
+        // El domingo se une al sábado de la víspera; si el mes empieza en
+        // domingo, ese domingo forma un fin de semana por sí solo.
+        const anterior = weekends.at(-1)?.days.at(-1);
+        const esVispera =
+          dia === 0 &&
+          anterior !== undefined &&
+          local.minus({ days: 1 }).toISODate() === anterior.date;
+        if (esVispera) weekends.at(-1)!.days.push(ultimoDia);
+        else weekends.push({ label: '', days: [ultimoDia] });
+        ultimaFecha = fecha;
+      }
+
+      const presentes = ocupantes(shift);
+      ultimoDia!.slots.push({
+        startMinute: shift.startMinute,
+        range: range(shift),
+        people: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
+        missing: Math.max(0, shift.capacity - presentes.length),
+      });
+    }
+
+    for (const weekend of weekends) {
+      const dias = weekend.days.map((dia) => this.time.formatDayShort(dia.date, location.timezone));
+      weekend.label = `${dias.join(' · ')} de ${start.setLocale('es-MX').toFormat('LLLL')}`;
+    }
+
+    return {
+      locationName: location.name,
+      year,
+      month,
+      monthLabel: start.setLocale('es-MX').toFormat('LLLL yyyy'),
+      weekdays: [...weekdaySlots.values()].sort((a, b) => a.startMinute - b.startMinute),
+      weekdayChanges,
+      weekends,
+    };
   }
 
   /**
