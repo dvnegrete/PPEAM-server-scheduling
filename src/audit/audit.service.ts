@@ -51,6 +51,7 @@ export const AUDIT_ACTIONS = {
   THREAD_CLOSED: 'thread.closed',
   RECURRING_ASSIGNED: 'recurring.assigned',
   RECURRING_UNASSIGNED: 'recurring.unassigned',
+  RECURRING_CAPTAIN_SET: 'recurring.captain_set',
   IMPORT_RUN: 'import.run',
   /** Entrada al panel. Con varias cuentas, saber quién entró deja de ser trivial. */
   ADMIN_LOGIN: 'admin.login',

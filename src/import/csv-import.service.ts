@@ -177,7 +177,7 @@ export class CsvImportService {
         result.errors.push({
           row: rowNumber,
           message:
-            'Falta el apellido paterno. El padrón ahora se captura en tres columnas: ' +
+            'Falta el apellido paterno. Los participantes ahora se capturan en tres columnas: ' +
             'nombre, apellido_paterno y apellido_materno (esta última opcional)',
           label: rowLabel(row),
           data: row,

@@ -1,4 +1,4 @@
-import { displayName, formalName, fullName, greetingName } from './person-name';
+import { displayName, formalName, fullName, greetingName, rosterName } from './person-name';
 
 describe('Composición del nombre', () => {
   const ana = {
@@ -74,6 +74,32 @@ describe('Composición del nombre', () => {
 
     it('tolera espacios de más', () => {
       expect(greetingName({ ...ana, firstName: '  Ana   María  ' })).toBe('Ana');
+    });
+  });
+
+  describe('rosterName, para el rol del mes', () => {
+    it('usa nombre de pila y apellido paterno', () => {
+      expect(rosterName(ana)).toBe('Ana María López');
+    });
+
+    it('recorta a dos nombres como máximo', () => {
+      expect(rosterName({ ...ana, firstName: 'Ana María Luisa' })).toBe('Ana María López');
+    });
+
+    it('ignora el nombre elegido', () => {
+      expect(rosterName({ ...ana, displayName: 'Anita' })).toBe('Ana María López');
+    });
+
+    it('abrevia el segundo nombre cuando el nombre es largo', () => {
+      expect(rosterName({ ...ana, firstName: 'María Guadalupe', paternalSurname: 'Cortés' })).toBe(
+        'María G. Cortés',
+      );
+    });
+
+    it('no abrevia a quien tiene un solo nombre, aunque sea largo', () => {
+      expect(rosterName({ ...ana, firstName: 'Maximiliano', paternalSurname: 'Valenzuela' })).toBe(
+        'Maximiliano Valenzuela',
+      );
     });
   });
 });

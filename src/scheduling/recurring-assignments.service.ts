@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ActorType, ParticipantStatus } from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { captainFirst } from '../common/captain/captain-first';
 import { displayName, fullName, PADRON_ORDER } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -9,6 +10,7 @@ export interface RecurringHolder {
   recurringId: string;
   participantId: string;
   name: string;
+  isCaptain: boolean;
 }
 
 export interface RecurringSlot {
@@ -66,6 +68,7 @@ export class RecurringAssignmentsService {
                 paternalSurname: true,
                 maternalSurname: true,
                 displayName: true,
+                spouseId: true,
               },
             },
           },
@@ -75,21 +78,31 @@ export class RecurringAssignmentsService {
       orderBy: [{ weekday: 'asc' }, { startMinute: 'asc' }, { weekOfMonth: 'asc' }],
     });
 
-    return plantillas.map((plantilla) => ({
-      templateId: plantilla.id,
-      weekday: plantilla.weekday,
-      weekOfMonth: plantilla.weekOfMonth,
-      startMinute: plantilla.startMinute,
-      endMinute: plantilla.endMinute,
-      range: this.time.formatRange(plantilla.startMinute, plantilla.endMinute),
-      capacity: plantilla.capacity,
-      holders: plantilla.recurringAssignments.map((asignacion) => ({
-        recurringId: asignacion.id,
-        participantId: asignacion.participant.id,
-        name: displayName(asignacion.participant),
-      })),
-      freeSlots: Math.max(0, plantilla.capacity - plantilla.recurringAssignments.length),
-    }));
+    return plantillas.map((plantilla) => {
+      const capitan = plantilla.recurringAssignments.find((asignacion) => asignacion.isCaptain);
+      const titulares = captainFirst(
+        plantilla.recurringAssignments,
+        capitan?.participantId,
+        (asignacion) => asignacion.participantId,
+        (asignacion) => asignacion.participant.spouseId,
+      );
+      return {
+        templateId: plantilla.id,
+        weekday: plantilla.weekday,
+        weekOfMonth: plantilla.weekOfMonth,
+        startMinute: plantilla.startMinute,
+        endMinute: plantilla.endMinute,
+        range: this.time.formatRange(plantilla.startMinute, plantilla.endMinute),
+        capacity: plantilla.capacity,
+        holders: titulares.map((asignacion) => ({
+          recurringId: asignacion.id,
+          participantId: asignacion.participant.id,
+          name: displayName(asignacion.participant),
+          isCaptain: asignacion.isCaptain,
+        })),
+        freeSlots: Math.max(0, plantilla.capacity - plantilla.recurringAssignments.length),
+      };
+    });
   }
 
   /**
@@ -109,7 +122,9 @@ export class RecurringAssignmentsService {
       const participante = await tx.participant.findUnique({ where: { id: participantId } });
       if (!participante) throw new NotFoundException('Ese participante ya no existe');
       if (participante.status !== ParticipantStatus.ACTIVE) {
-        throw new BadRequestException(`${displayName(participante)} no está activo en el padrón`);
+        throw new BadRequestException(
+          `${displayName(participante)} no está activo entre los participantes`,
+        );
       }
 
       const existente = await tx.recurringAssignment.findUnique({
@@ -170,7 +185,9 @@ export class RecurringAssignmentsService {
 
     await this.prisma.recurringAssignment.update({
       where: { id: recurringId },
-      data: { active: false },
+      // Si vuelve a ser titular más adelante, no regresa como capitán sin que
+      // nadie lo decida.
+      data: { active: false, isCaptain: false },
     });
 
     await this.audit.record({
@@ -186,6 +203,64 @@ export class RecurringAssignmentsService {
         startMinute: asignacion.shiftTemplate.startMinute,
         weekOfMonth: asignacion.shiftTemplate.weekOfMonth,
       },
+    });
+  }
+
+  /**
+   * Marca o desmarca a un titular como capitán de su turno fijo.
+   *
+   * Hay a lo más un capitán por plantilla: marcar a uno quita la marca al
+   * anterior. El bloqueo sobre la plantilla evita que dos administradores
+   * marquen a la vez y dejen dos capitanes.
+   */
+  async setCaptain(recurringId: string, isCaptain: boolean, actor: Actor = {}): Promise<void> {
+    await this.prisma.$transaction(async (tx) => {
+      const asignacion = await tx.recurringAssignment.findUnique({
+        where: { id: recurringId },
+        include: { participant: true, shiftTemplate: true },
+      });
+      if (!asignacion) throw new NotFoundException('Esa asignación ya no existe');
+      if (!asignacion.active) {
+        throw new BadRequestException(
+          `${displayName(asignacion.participant)} ya no es titular de ese turno`,
+        );
+      }
+
+      await tx.$queryRaw`SELECT id FROM shift_templates WHERE id = ${asignacion.shiftTemplateId} FOR UPDATE`;
+
+      if (isCaptain) {
+        await tx.recurringAssignment.updateMany({
+          where: {
+            shiftTemplateId: asignacion.shiftTemplateId,
+            isCaptain: true,
+            NOT: { id: recurringId },
+          },
+          data: { isCaptain: false },
+        });
+      }
+      await tx.recurringAssignment.update({
+        where: { id: recurringId },
+        data: { isCaptain },
+      });
+
+      await this.audit.record(
+        {
+          actorType: actor.id ? ActorType.ADMIN : ActorType.SYSTEM,
+          actorId: actor.id ?? null,
+          actorName: actor.name ?? null,
+          action: AUDIT_ACTIONS.RECURRING_CAPTAIN_SET,
+          entity: 'RecurringAssignment',
+          entityId: recurringId,
+          metadata: {
+            participantName: fullName(asignacion.participant),
+            isCaptain,
+            weekday: asignacion.shiftTemplate.weekday,
+            startMinute: asignacion.shiftTemplate.startMinute,
+            weekOfMonth: asignacion.shiftTemplate.weekOfMonth,
+          },
+        },
+        tx,
+      );
     });
   }
 

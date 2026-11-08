@@ -144,6 +144,29 @@ export class TimeService {
       : `${inicio.reloj} ${inicio.meridiano} a ${fin.reloj} ${fin.meridiano}`;
   }
 
+  /**
+   * "7 a 9 am", "11 am a 1 pm": la versión corta para la imagen del rol del mes.
+   *
+   * Sigue la misma regla del meridiano que `formatRange12`, pero sin ceros a la
+   * izquierda ni ":00", que en la imagen solo restan espacio a los nombres. Los
+   * minutos se conservan cuando los hay: "7:30 a 9:30 am".
+   */
+  formatRangeShort(startMinute: number, endMinute: number): string {
+    const corta = (minuteOfDay: number) => {
+      const { reloj, meridiano } = this.hour12(minuteOfDay);
+      const [hora, minutos] = reloj.split(':');
+      return {
+        reloj: minutos === '00' ? String(Number(hora)) : `${Number(hora)}:${minutos}`,
+        meridiano,
+      };
+    };
+    const inicio = corta(startMinute);
+    const fin = corta(endMinute);
+    return inicio.meridiano === fin.meridiano
+      ? `${inicio.reloj} a ${fin.reloj} ${fin.meridiano}`
+      : `${inicio.reloj} ${inicio.meridiano} a ${fin.reloj} ${fin.meridiano}`;
+  }
+
   /** "Jue. 15" — el día como se lee en una lista de turnos. */
   formatDayShort(date: DateTime | Date | string, timezone: string): string {
     const fecha = this.toLocalDate(date, timezone).setLocale('es-MX');

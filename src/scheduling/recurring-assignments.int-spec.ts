@@ -216,4 +216,76 @@ describe('Turnos fijos (integración)', () => {
     ]);
     expect(registros.every((registro) => registro.actorName === 'Elena Mora')).toBe(true);
   });
+
+  describe('capitán de turno', () => {
+    async function franjaConDos() {
+      const location = await createLocation(ctx.prisma);
+      const plantilla = await crearFranja(location.id, 3);
+      const ana = await createParticipant(ctx.prisma, location.id, 'Ana López Pérez');
+      const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz Mora');
+      await recurring.assign(plantilla.id, ana.id);
+      await recurring.assign(plantilla.id, beto.id);
+      const [franja] = await recurring.listByLocation(location.id);
+      const idDe = (nombre: string) =>
+        franja.holders.find((titular) => titular.name === nombre)!.recurringId;
+      return { location, plantilla, ana, beto, idDe };
+    }
+
+    it('marca a un capitán y lo pone primero entre los titulares', async () => {
+      const { location, idDe } = await franjaConDos();
+
+      await recurring.setCaptain(idDe('Beto Ruiz'), true, { id: 'admin-1', name: 'Elena' });
+
+      const [franja] = await recurring.listByLocation(location.id);
+      expect(franja.holders.map((t) => [t.name, t.isCaptain])).toEqual([
+        ['Beto Ruiz', true],
+        ['Ana López', false],
+      ]);
+    });
+
+    it('solo hay un capitán: marcar a otro le quita la marca al anterior', async () => {
+      const { location, idDe } = await franjaConDos();
+
+      await recurring.setCaptain(idDe('Ana López'), true);
+      await recurring.setCaptain(idDe('Beto Ruiz'), true);
+
+      const [franja] = await recurring.listByLocation(location.id);
+      expect(franja.holders.filter((t) => t.isCaptain).map((t) => t.name)).toEqual(['Beto Ruiz']);
+    });
+
+    it('se puede desmarcar y el turno queda sin capitán', async () => {
+      const { location, idDe } = await franjaConDos();
+
+      await recurring.setCaptain(idDe('Ana López'), true);
+      await recurring.setCaptain(idDe('Ana López'), false);
+
+      const [franja] = await recurring.listByLocation(location.id);
+      expect(franja.holders.some((t) => t.isCaptain)).toBe(false);
+    });
+
+    it('quitar al titular le quita también la capitanía', async () => {
+      const { plantilla, ana, idDe } = await franjaConDos();
+      const id = idDe('Ana López');
+
+      await recurring.setCaptain(id, true);
+      await recurring.unassign(id);
+      await expect(recurring.setCaptain(id, true)).rejects.toThrow(/ya no es titular/);
+
+      // Al volver a sentarlo no regresa como capitán por sorpresa.
+      await recurring.assign(plantilla.id, ana.id);
+      const fila = await ctx.prisma.recurringAssignment.findUniqueOrThrow({ where: { id } });
+      expect(fila.isCaptain).toBe(false);
+    });
+
+    it('deja rastro de quién cambió al capitán', async () => {
+      const { idDe } = await franjaConDos();
+
+      await recurring.setCaptain(idDe('Ana López'), true, { id: 'admin-1', name: 'Elena Mora' });
+
+      const registro = await ctx.prisma.auditLog.findFirstOrThrow({
+        where: { action: 'recurring.captain_set' },
+      });
+      expect(registro.actorName).toBe('Elena Mora');
+    });
+  });
 });

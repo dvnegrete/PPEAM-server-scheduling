@@ -48,4 +48,15 @@ describe('PhoneService', () => {
   it('formatea para mostrar', () => {
     expect(service.format('+525512345678')).toBe('+52 55 1234 5678');
   });
+
+  describe('formatNational, para el rol del mes', () => {
+    it('agrupa los 10 dígitos según la lada', () => {
+      expect(service.formatNational('+525512345678')).toBe('55 1234 5678');
+      expect(service.formatNational('+522221234567')).toBe('222 123 4567');
+    });
+
+    it('conserva la clave de país de un número extranjero', () => {
+      expect(service.formatNational('+13055551234')).toBe('+1 305 555 1234');
+    });
+  });
 });
