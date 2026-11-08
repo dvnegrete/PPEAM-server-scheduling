@@ -89,5 +89,17 @@ describe('Composición del nombre', () => {
     it('ignora el nombre elegido', () => {
       expect(rosterName({ ...ana, displayName: 'Anita' })).toBe('Ana María López');
     });
+
+    it('abrevia el segundo nombre cuando el nombre es largo', () => {
+      expect(rosterName({ ...ana, firstName: 'María Guadalupe', paternalSurname: 'Cortés' })).toBe(
+        'María G. Cortés',
+      );
+    });
+
+    it('no abrevia a quien tiene un solo nombre, aunque sea largo', () => {
+      expect(rosterName({ ...ana, firstName: 'Maximiliano', paternalSurname: 'Valenzuela' })).toBe(
+        'Maximiliano Valenzuela',
+      );
+    });
   });
 });
