@@ -48,6 +48,28 @@ describe('Tablero de administradores (integración)', () => {
     return { location, gente, shift };
   }
 
+  async function casar(unoId: string, otroId: string) {
+    await ctx.prisma.participant.update({
+      where: { id: unoId },
+      data: { maritalStatus: 'CASADO', spouseId: otroId },
+    });
+    await ctx.prisma.participant.update({
+      where: { id: otroId },
+      data: { maritalStatus: 'CASADO', spouseId: unoId },
+    });
+  }
+
+  /** Liga el turno a una plantilla donde `participantId` es el capitán fijo. */
+  async function hacerCapitan(locationId: string, shiftId: string, participantId: string) {
+    const plantilla = await ctx.prisma.shiftTemplate.create({
+      data: { locationId, weekday: 0, startMinute: 7 * 60, endMinute: 9 * 60, weekOfMonth: 5 },
+    });
+    await ctx.prisma.recurringAssignment.create({
+      data: { shiftTemplateId: plantilla.id, participantId, isCaptain: true },
+    });
+    await ctx.prisma.shift.update({ where: { id: shiftId }, data: { templateId: plantilla.id } });
+  }
+
   function admin(nombre = 'Elena Mora') {
     return { actorId: 'admin-1', actorType: ActorType.ADMIN, actorName: nombre };
   }
@@ -321,6 +343,37 @@ describe('Tablero de administradores (integración)', () => {
 
       expect(primera.spouseId).toBe(gente[1].id);
       expect(tercera.spouseId).toBeNull();
+    });
+
+    it('pone primero al capitán y en segundo lugar a su cónyuge', async () => {
+      const { location, gente, shift } = await escenario(3);
+      // Carla (tercera por registro) es capitana y está casada con Ana.
+      await casar(gente[2].id, gente[0].id);
+      await hacerCapitan(location.id, shift.id, gente[2].id);
+
+      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+        .shifts[0];
+
+      expect(turno.participants.map((p) => [p.name, p.isCaptain])).toEqual([
+        ['Carla Díaz', true],
+        ['Ana López', false],
+        ['Beto Ruiz', false],
+      ]);
+    });
+
+    it('si el capitán canceló, el turno queda sin capitán', async () => {
+      const { location, gente, shift } = await escenario(3);
+      await hacerCapitan(location.id, shift.id, gente[2].id);
+      await ctx.prisma.assignment.update({
+        where: { shiftId_participantId: { shiftId: shift.id, participantId: gente[2].id } },
+        data: { status: 'CANCELLED', cancelledAt: NOW },
+      });
+
+      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+        .shifts[0];
+
+      expect(turno.participants.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz']);
+      expect(turno.participants.some((p) => p.isCaptain)).toBe(false);
     });
 
     it('muestra quién cubre y quién canceló, con sus fechas y responsables', async () => {
