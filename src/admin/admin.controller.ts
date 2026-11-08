@@ -581,7 +581,7 @@ export class AdminController {
 
     if (!participantId) {
       throw new BadRequestException(
-        'Indica a quién del padrón, o los datos de quien viene de fuera',
+        'Indica a cuál de los participantes, o los datos de quien viene de fuera',
       );
     }
 

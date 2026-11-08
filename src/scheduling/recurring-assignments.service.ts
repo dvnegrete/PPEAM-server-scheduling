@@ -122,7 +122,9 @@ export class RecurringAssignmentsService {
       const participante = await tx.participant.findUnique({ where: { id: participantId } });
       if (!participante) throw new NotFoundException('Ese participante ya no existe');
       if (participante.status !== ParticipantStatus.ACTIVE) {
-        throw new BadRequestException(`${displayName(participante)} no está activo en el padrón`);
+        throw new BadRequestException(
+          `${displayName(participante)} no está activo entre los participantes`,
+        );
       }
 
       const existente = await tx.recurringAssignment.findUnique({

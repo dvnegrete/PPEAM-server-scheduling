@@ -69,7 +69,7 @@ export const AUDIT_CATEGORIES: Record<AuditCategoryId, AuditCategory> = {
     ],
   },
   padron: {
-    label: 'Padrón',
+    label: 'Participantes',
     actions: [
       A.PARTICIPANT_CREATED,
       A.PARTICIPANT_UPDATED,
@@ -133,7 +133,7 @@ const ETIQUETAS: Record<AuditAction, string> = {
   [A.TASK_ESCALATED]: 'Solicitud escalada',
   [A.SUPERVISOR_AVAILABLE]: 'Encargado disponible',
   [A.SUPERVISOR_UNAVAILABLE]: 'Encargado no disponible',
-  [A.PARTICIPANT_CREATED]: 'Alta en el padrón',
+  [A.PARTICIPANT_CREATED]: 'Alta de participante',
   [A.PARTICIPANT_UPDATED]: 'Datos actualizados',
   [A.PARTICIPANT_PHONE_CHANGED]: 'Cambio de teléfono',
   [A.PARTICIPANT_STATUS_CHANGED]: 'Cambio de situación',

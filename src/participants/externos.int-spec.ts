@@ -94,7 +94,7 @@ describe('Quien cubre sin estar en el padrón (integración)', () => {
           locationId,
           ...admin,
         }),
-      ).rejects.toThrow(/López Pérez, Ana.*sí está en el padrón/);
+      ).rejects.toThrow(/López Pérez, Ana.*sí es participante/);
     });
 
     it('rechaza un teléfono inválido con un mensaje claro', async () => {
