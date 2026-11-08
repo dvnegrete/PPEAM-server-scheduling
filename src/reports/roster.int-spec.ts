@@ -83,7 +83,7 @@ describe('Rol del mes (integración)', () => {
 
     expect(rol.weekdays.map((dia) => dia.title)).toEqual(['Lunes']);
     const turno = rol.weekdays[0].slots[0];
-    expect(turno.range).toBe('07:00 a 09:00 am');
+    expect(turno.range).toBe('7 a 9 am');
     expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz', 'Carla Díaz']);
     expect(turno.people[0].phone).toMatch(/^55 \d{4} \d{4}$/);
   });

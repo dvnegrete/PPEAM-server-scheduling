@@ -201,7 +201,7 @@ export interface RosterPerson {
 /** Un turno del rol: el horario y quién va. */
 export interface RosterSlot {
   startMinute: number;
-  /** «07:00 a 09:00 am». */
+  /** «7 a 9 am», «11 am a 1 pm». */
   range: string;
   people: RosterPerson[];
   /** Lugares que faltan para completar el cupo. */
@@ -636,7 +636,7 @@ export class ReportsService {
         (participant) => participant.spouseId,
       ).map((participant) => persona(participant, capitan));
     const range = (shift: RosterShift) =>
-      this.time.formatRange12(shift.startMinute, shift.endMinute);
+      this.time.formatRangeShort(shift.startMinute, shift.endMinute);
     const weekdayOf = (shift: RosterShift) => this.time.weekday(shift.date, 'utc');
 
     // --- Entre semana -------------------------------------------------------

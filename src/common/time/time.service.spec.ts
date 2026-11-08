@@ -119,6 +119,16 @@ describe('TimeService', () => {
       expect(service.formatRange12(660, 780)).toBe('11:00 am a 01:00 pm');
     });
 
+    it('en versión corta quita los ceros y los :00, y conserva los minutos', () => {
+      expect(service.formatRangeShort(420, 540)).toBe('7 a 9 am');
+      expect(service.formatRangeShort(540, 660)).toBe('9 a 11 am');
+      expect(service.formatRangeShort(660, 780)).toBe('11 am a 1 pm');
+      expect(service.formatRangeShort(780, 900)).toBe('1 a 3 pm');
+      expect(service.formatRangeShort(900, 1020)).toBe('3 a 5 pm');
+      expect(service.formatRangeShort(450, 570)).toBe('7:30 a 9:30 am');
+      expect(service.formatRangeShort(720, 840)).toBe('12 a 2 pm');
+    });
+
     it('resuelve el mediodía y la medianoche como las doce, no como cero', () => {
       expect(service.formatRange12(0, 60)).toBe('12:00 a 01:00 am');
       expect(service.formatRange12(720, 840)).toBe('12:00 a 02:00 pm');
