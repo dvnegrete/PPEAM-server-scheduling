@@ -132,7 +132,7 @@ export class ParticipantsService {
       const esDelPadron = await this.memberships.membershipIn(existente.id, params.locationId);
       if (esDelPadron?.active) {
         throw new ConflictException(
-          `${formalName(existente)} sí está en el padrón de este punto. Selecciónala de la lista`,
+          `${formalName(existente)} sí es participante de este punto. Selecciónala de la lista`,
         );
       }
       return existente;
@@ -275,7 +275,7 @@ export class ParticipantsService {
 
     if (spouseParticipantId && spouseName) {
       throw new BadRequestException(
-        'Indica al cónyuge del padrón o su nombre, no ambos: si está en el padrón, su nombre ya se conoce',
+        'Indica al cónyuge de la lista de participantes o su nombre, no ambos: si es participante, su nombre ya se conoce',
       );
     }
     if (spouseParticipantId === participantId) {
@@ -292,7 +292,8 @@ export class ParticipantsService {
       let nuevoConyuge: Participant | null = null;
       if (spouseParticipantId) {
         nuevoConyuge = await tx.participant.findUnique({ where: { id: spouseParticipantId } });
-        if (!nuevoConyuge) throw new NotFoundException('El cónyuge indicado no está en el padrón');
+        if (!nuevoConyuge)
+          throw new NotFoundException('El cónyuge indicado no está entre los participantes');
 
         if (nuevoConyuge.spouseId && nuevoConyuge.spouseId !== participantId) {
           const tercero = await tx.participant.findUnique({

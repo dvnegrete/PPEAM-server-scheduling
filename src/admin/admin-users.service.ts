@@ -99,7 +99,7 @@ export class AdminUsersService {
     // reconocer en la lista.
     if (!vinculado && !(params.firstName?.trim() && params.paternalSurname?.trim())) {
       throw new BadRequestException(
-        'Hacen falta el nombre y el apellido, o vincular la cuenta con alguien del padrón',
+        'Hacen falta el nombre y el apellido, o vincular la cuenta con uno de los participantes',
       );
     }
 

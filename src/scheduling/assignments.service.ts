@@ -289,7 +289,9 @@ export class AssignmentsService {
       });
       if (!participant) throw new NotFoundException('Ese participante ya no existe');
       if (participant.status !== 'ACTIVE') {
-        throw new BadRequestException(`${displayName(participant)} no está activo en el padrón`);
+        throw new BadRequestException(
+          `${displayName(participant)} no está activo entre los participantes`,
+        );
       }
 
       const occupied = await tx.assignment.count({
