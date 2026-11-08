@@ -353,6 +353,12 @@ model RecurringAssignment {
   participantId   String @map("participant_id")
 
   active   Boolean   @default(true)
+
+  /// Capitán del turno: como mucho uno por plantilla (lo valida el servicio).
+  /// Las vistas lo resuelven al leer, así que si cancela ese día el turno queda
+  /// sin capitán y nadie lo hereda.
+  isCaptain Boolean @default(false) @map("is_captain")
+
   startsOn DateTime? @map("starts_on") @db.Date
   endsOn   DateTime? @map("ends_on") @db.Date
 
