@@ -60,6 +60,15 @@ export class PhoneService {
     return parsed?.formatInternational() ?? e164;
   }
 
+  /**
+   * Los 10 dígitos agrupados por lada, como se dicta en México: 55 1234 5678 o
+   * 222 123 4567. Es el formato del rol del mes, donde el +52 solo estorba. Un
+   * número de otro país conserva su forma internacional para no perder la clave.
+   */
+  formatNational(e164: string): string {
+    return formatNationalPhone(e164);
+  }
+
   private stripMexicanMobilePrefix(value: string): string {
     const digits = value.replace(/[^\d+]/g, '');
     const withoutPlus = digits.startsWith('+') ? digits.slice(1) : digits;
@@ -68,4 +77,11 @@ export class PhoneService {
     }
     return digits.startsWith('+') ? digits : `+${withoutPlus}`.replace(/^\+(?=\d{10}$)/, '');
   }
+}
+
+/** Ver `PhoneService.formatNational`; libre para quien no inyecta el servicio. */
+export function formatNationalPhone(e164: string): string {
+  const parsed = parsePhoneNumberFromString(e164);
+  if (!parsed) return e164;
+  return parsed.country === 'MX' ? parsed.formatNational() : parsed.formatInternational();
 }
