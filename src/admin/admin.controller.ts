@@ -25,6 +25,7 @@ import { AdminUsersService } from './admin-users.service';
 import {
   AnnounceConfirmationsDto,
   AssignParticipantDto,
+  SetCaptainDto,
   CancelAssignmentDto,
   ConfirmationsQueryDto,
   ChangeOwnPasswordDto,
@@ -493,6 +494,22 @@ export class AdminController {
     @CurrentAdmin() admin: AdminTokenPayload,
   ) {
     await this.recurring.unassign(recurringId, { id: admin.sub, name: admin.name });
+    return { ok: true };
+  }
+
+  /** Marca a un titular como capitán del turno (o se lo quita). */
+  @Patch('recurring/:recurringId/captain')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(200)
+  async setRecurringCaptain(
+    @Param('recurringId') recurringId: string,
+    @Body() dto: SetCaptainDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    await this.recurring.setCaptain(recurringId, dto.isCaptain, {
+      id: admin.sub,
+      name: admin.name,
+    });
     return { ok: true };
   }
 

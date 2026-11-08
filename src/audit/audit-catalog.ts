@@ -82,7 +82,7 @@ export const AUDIT_CATEGORIES: Record<AuditCategoryId, AuditCategory> = {
   },
   turnos_fijos: {
     label: 'Turnos fijos',
-    actions: [A.RECURRING_ASSIGNED, A.RECURRING_UNASSIGNED],
+    actions: [A.RECURRING_ASSIGNED, A.RECURRING_UNASSIGNED, A.RECURRING_CAPTAIN_SET],
   },
   mensajes: {
     label: 'Preguntas por WhatsApp',
@@ -145,6 +145,7 @@ const ETIQUETAS: Record<AuditAction, string> = {
   [A.THREAD_CLOSED]: 'Pregunta cerrada',
   [A.RECURRING_ASSIGNED]: 'Turno fijo asignado',
   [A.RECURRING_UNASSIGNED]: 'Turno fijo retirado',
+  [A.RECURRING_CAPTAIN_SET]: 'Capitán de turno cambiado',
   [A.IMPORT_RUN]: 'Importación',
   [A.ADMIN_LOGIN]: 'Entrada al panel',
   [A.ADMIN_LOGIN_FAILED]: 'Intento de entrada fallido',

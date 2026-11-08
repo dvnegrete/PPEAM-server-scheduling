@@ -83,7 +83,7 @@ describe('Rol del mes (integración)', () => {
 
     expect(rol.weekdays.map((dia) => dia.title)).toEqual(['Lunes']);
     const turno = rol.weekdays[0].slots[0];
-    expect(turno.range).toBe('07:00 a 09:00 am');
+    expect(turno.range).toBe('7 a 9 am');
     expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz', 'Carla Díaz']);
     expect(turno.people[0].phone).toMatch(/^55 \d{4} \d{4}$/);
   });
@@ -106,5 +106,41 @@ describe('Rol del mes (integración)', () => {
     const sabado = rol.weekends[0].slots[0];
     expect(sabado.people.map((p) => p.name)).toEqual(['Ana López']);
     expect(sabado.missing).toBe(2);
+  });
+
+  it('entre semana pone primero al capitán y luego a su cónyuge', async () => {
+    const location = await createLocation(ctx.prisma);
+    const [ana, beto, carla] = await Promise.all(
+      ['Ana López', 'Beto Ruiz', 'Carla Díaz'].map((nombre) =>
+        createParticipant(ctx.prisma, location.id, nombre),
+      ),
+    );
+    await ctx.prisma.participant.update({ where: { id: carla.id }, data: { spouseId: beto.id } });
+    await ctx.prisma.participant.update({ where: { id: beto.id }, data: { spouseId: carla.id } });
+
+    const plantilla = await ctx.prisma.shiftTemplate.create({
+      data: { locationId: location.id, weekday: 1, startMinute: 7 * 60, endMinute: 9 * 60 },
+    });
+    await ctx.prisma.recurringAssignment.create({
+      data: { shiftTemplateId: plantilla.id, participantId: carla.id, isCaptain: true },
+    });
+    for (const dia of [2, 9, 16, 23, 30]) {
+      const shift = await createShift(ctx.prisma, location.id, {
+        startsAt: sieteAm(dia),
+        participantIds: [ana.id, beto.id, carla.id],
+      });
+      await ctx.prisma.shift.update({
+        where: { id: shift.id },
+        data: { templateId: plantilla.id },
+      });
+    }
+
+    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const turno = rol.weekdays[0].slots[0];
+    expect(turno.people.map((p) => [p.name, p.isCaptain])).toEqual([
+      ['Carla Díaz', true],
+      ['Beto Ruiz', false],
+      ['Ana López', false],
+    ]);
   });
 });

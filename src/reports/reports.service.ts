@@ -17,6 +17,7 @@ import { displayName, formalName, PADRON_ORDER, rosterName } from '../common/nam
 import { formatNationalPhone } from '../common/phone/phone.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { captainFirst } from '../common/captain/captain-first';
 import { OCCUPYING_STATUSES } from '../scheduling/shifts.service';
 
 export interface AttendanceRow {
@@ -104,6 +105,8 @@ export interface DashboardShift {
     name: string;
     /** Cónyuge que también participa; sirve para emparejarlos dentro del turno. */
     spouseId: string | null;
+    /** Capitán del turno: va primero, y su cónyuge (si está) en segundo lugar. */
+    isCaptain: boolean;
     /** Nota de esa vez, si se capturó al registrarlo. */
     note: string | null;
     origin: AssignmentOrigin;
@@ -191,12 +194,14 @@ export interface RosterPerson {
   name: string;
   /** «55 1234 5678», para que cualquiera pueda llamar a su turno o al de al lado. */
   phone: string;
+  /** Capitán del turno; siempre es el primero de la lista. */
+  isCaptain: boolean;
 }
 
 /** Un turno del rol: el horario y quién va. */
 export interface RosterSlot {
   startMinute: number;
-  /** «07:00 a 09:00 am». */
+  /** «7 a 9 am», «11 am a 1 pm». */
   range: string;
   people: RosterPerson[];
   /** Lugares que faltan para completar el cupo. */
@@ -514,7 +519,18 @@ export class ReportsService {
                 paternalSurname: true,
                 maternalSurname: true,
                 displayName: true,
+                spouseId: true,
               },
+            },
+          },
+        },
+        // El capitán se resuelve al leer: si canceló, no está entre los
+        // ocupantes y el turno queda sin capitán.
+        template: {
+          select: {
+            recurringAssignments: {
+              where: { active: true, isCaptain: true },
+              select: { participantId: true },
             },
           },
         },
@@ -522,23 +538,32 @@ export class ReportsService {
       orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
     });
 
-    return shifts.map((shift) => ({
-      id: shift.id,
-      date: shift.date.toISOString().slice(0, 10),
-      range: this.time.formatRange(shift.startMinute, shift.endMinute),
-      startMinute: shift.startMinute,
-      endMinute: shift.endMinute,
-      status: shift.status,
-      capacity: shift.capacity,
-      occupied: shift.assignments.length,
-      weekOfMonth: shift.weekOfMonth,
-      participants: shift.assignments.map((assignment) => ({
-        id: assignment.participant.id,
-        name: displayName(assignment.participant),
-        origin: assignment.origin,
-        confirmed: assignment.status === AssignmentStatus.CONFIRMED,
-      })),
-    }));
+    return shifts.map((shift) => {
+      const capitan = captainOf(shift);
+      return {
+        id: shift.id,
+        date: shift.date.toISOString().slice(0, 10),
+        range: this.time.formatRange(shift.startMinute, shift.endMinute),
+        startMinute: shift.startMinute,
+        endMinute: shift.endMinute,
+        status: shift.status,
+        capacity: shift.capacity,
+        occupied: shift.assignments.length,
+        weekOfMonth: shift.weekOfMonth,
+        participants: captainFirst(
+          shift.assignments,
+          capitan,
+          (assignment) => assignment.participantId,
+          (assignment) => assignment.participant.spouseId,
+        ).map((assignment) => ({
+          id: assignment.participant.id,
+          name: displayName(assignment.participant),
+          isCaptain: assignment.participantId === capitan,
+          origin: assignment.origin,
+          confirmed: assignment.status === AssignmentStatus.CONFIRMED,
+        })),
+      };
+    });
   }
 
   /**
@@ -568,7 +593,23 @@ export class ReportsService {
         assignments: {
           include: {
             participant: {
-              select: { id: true, firstName: true, paternalSurname: true, phoneE164: true },
+              select: {
+                id: true,
+                firstName: true,
+                paternalSurname: true,
+                phoneE164: true,
+                spouseId: true,
+              },
+            },
+          },
+        },
+        // El capitán se resuelve al leer: si canceló, no está entre los
+        // ocupantes y el turno queda sin capitán.
+        template: {
+          select: {
+            recurringAssignments: {
+              where: { active: true, isCaptain: true },
+              select: { participantId: true },
             },
           },
         },
@@ -579,13 +620,23 @@ export class ReportsService {
     type RosterShift = (typeof shifts)[number];
     type RosterParticipant = RosterShift['assignments'][number]['participant'];
 
-    const persona = (participant: RosterParticipant): RosterPerson => ({
+    const persona = (participant: RosterParticipant, capitan: string | null): RosterPerson => ({
       name: rosterName(participant),
       phone: formatNationalPhone(participant.phoneE164),
+      isCaptain: participant.id === capitan,
     });
-    const porNombre = (a: RosterPerson, b: RosterPerson) => a.name.localeCompare(b.name, 'es');
+    const porNombre = (a: RosterParticipant, b: RosterParticipant) =>
+      rosterName(a).localeCompare(rosterName(b), 'es');
+    /** Por nombre, con el capitán y su cónyuge al frente. */
+    const ordenar = (gente: RosterParticipant[], capitan: string | null): RosterPerson[] =>
+      captainFirst(
+        [...gente].sort(porNombre),
+        capitan,
+        (participant) => participant.id,
+        (participant) => participant.spouseId,
+      ).map((participant) => persona(participant, capitan));
     const range = (shift: RosterShift) =>
-      this.time.formatRange12(shift.startMinute, shift.endMinute);
+      this.time.formatRangeShort(shift.startMinute, shift.endMinute);
     const weekdayOf = (shift: RosterShift) => this.time.weekday(shift.date, 'utc');
 
     // --- Entre semana -------------------------------------------------------
@@ -623,7 +674,10 @@ export class ReportsService {
         slots.push({
           startMinute: muestra.startMinute,
           range: range(muestra),
-          people: titulares.map((fijo) => persona(fijo.participant)).sort(porNombre),
+          people: ordenar(
+            titulares.map((fijo) => fijo.participant),
+            captainOf(muestra),
+          ),
           missing: Math.max(0, capacidad - titulares.length),
         });
       }
@@ -664,7 +718,10 @@ export class ReportsService {
         return {
           startMinute: shift.startMinute,
           range: range(shift),
-          people: presentes.map((assignment) => persona(assignment.participant)).sort(porNombre),
+          people: ordenar(
+            presentes.map((assignment) => assignment.participant),
+            captainOf(shift),
+          ),
           missing: Math.max(0, shift.capacity - presentes.length),
         };
       }),
@@ -709,6 +766,16 @@ export class ReportsService {
           },
           orderBy: { createdAt: 'asc' },
         },
+        // El capitán se resuelve al leer: si canceló, no está entre los
+        // ocupantes y el turno queda sin capitán.
+        template: {
+          select: {
+            recurringAssignments: {
+              where: { active: true, isCaptain: true },
+              select: { participantId: true },
+            },
+          },
+        },
       },
       orderBy: [{ date: 'asc' }, { startMinute: 'asc' }],
     });
@@ -719,8 +786,12 @@ export class ReportsService {
     let cancellations = 0;
 
     for (const shift of shifts) {
-      const ocupantes = shift.assignments.filter((assignment) =>
-        OCCUPYING_STATUSES.includes(assignment.status),
+      const capitan = captainOf(shift);
+      const ocupantes = captainFirst(
+        shift.assignments.filter((assignment) => OCCUPYING_STATUSES.includes(assignment.status)),
+        capitan,
+        (assignment) => assignment.participantId,
+        (assignment) => assignment.participant.spouseId,
       );
       const bajas = shift.assignments.filter(
         (assignment) => assignment.status === AssignmentStatus.CANCELLED,
@@ -770,6 +841,7 @@ export class ReportsService {
           participantId: assignment.participant.id,
           name: displayName(assignment.participant),
           spouseId: assignment.participant.spouseId,
+          isCaptain: assignment.participantId === capitan,
           note: assignment.note,
           origin: assignment.origin,
           confirmed: assignment.status === AssignmentStatus.CONFIRMED,
@@ -952,4 +1024,14 @@ function parseCursor(raw?: string): { at: Date; id: string } | null {
     throw new BadRequestException('El cursor no tiene el formato esperado');
   }
   return { at, id };
+}
+
+/**
+ * Capitán vigente de un turno según su plantilla, o `null`. Que esté o no entre
+ * los ocupantes lo decide cada vista: si canceló, no aparece y nadie lo hereda.
+ */
+function captainOf(shift: {
+  template: { recurringAssignments: Array<{ participantId: string }> } | null;
+}): string | null {
+  return shift.template?.recurringAssignments[0]?.participantId ?? null;
 }

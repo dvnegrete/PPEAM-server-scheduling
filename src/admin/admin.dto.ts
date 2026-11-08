@@ -430,6 +430,12 @@ export class AssignParticipantDto {
   participantId!: string;
 }
 
+/** Marca o desmarca a un titular como capitán de su turno fijo. */
+export class SetCaptainDto {
+  @IsBoolean({ message: 'Falta indicar si es capitán' })
+  isCaptain!: boolean;
+}
+
 /**
  * Quién cubre un turno concreto, de una de dos formas excluyentes: alguien del
  * padrón por su `participantId`, o alguien de fuera con sus datos mínimos.
