@@ -324,6 +324,16 @@ export class AdminController {
     return Object.fromEntries(entradas);
   }
 
+  /**
+   * «¿Qué turnos cubre tal persona?»: sus turnos fijos y las fechas que ya
+   * tiene registradas de hoy en adelante, sustituciones incluidas.
+   */
+  @Get('locations/:id/participants/:participantId/shifts')
+  @UseGuards(AdminAuthGuard)
+  participantShifts(@Param('id') id: string, @Param('participantId') participantId: string) {
+    return this.reports.participantShifts(id, participantId);
+  }
+
   /** Participantes del punto que pueden figurar como cónyuge. */
   @Get('locations/:id/participants/:participantId/spouse-candidates')
   @UseGuards(AdminAuthGuard)
