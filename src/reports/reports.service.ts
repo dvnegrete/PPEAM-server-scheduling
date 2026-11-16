@@ -3,6 +3,7 @@ import {
   AssignmentOrigin,
   AssignmentStatus,
   CoverageRequestStatus,
+  ParticipantStatus,
   Prisma,
   ShiftStatus,
 } from '@prisma/client';
@@ -633,6 +634,7 @@ export class ReportsService {
                 paternalSurname: true,
                 phoneE164: true,
                 spouseId: true,
+                status: true,
               },
             },
           },
@@ -676,6 +678,7 @@ export class ReportsService {
     // --- Entre semana -------------------------------------------------------
     // Titular es quien tiene el turno fijo en la mayoría de las fechas, haya
     // cancelado alguna o no: una baja aislada no lo saca del rol del mes.
+    // Quien se dio de baja del todo sí sale: ya no va a ir a ninguna.
     const porFranja = new Map<string, RosterShift[]>();
     for (const shift of shifts) {
       const dia = weekdayOf(shift);
@@ -695,6 +698,7 @@ export class ReportsService {
         for (const shift of grupo) {
           for (const assignment of shift.assignments) {
             if (assignment.origin !== AssignmentOrigin.FIXED) continue;
+            if (assignment.participant.status === ParticipantStatus.INACTIVE) continue;
             const previo = fijos.get(assignment.participantId);
             fijos.set(assignment.participantId, {
               participant: assignment.participant,

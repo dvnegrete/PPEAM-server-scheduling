@@ -1,4 +1,4 @@
-import { AssignmentStatus } from '@prisma/client';
+import { AssignmentStatus, ParticipantStatus } from '@prisma/client';
 import { createLocation, createParticipant, createShift } from '../../test/helpers/fixtures';
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { ReportsService } from './reports.service';
@@ -86,6 +86,20 @@ describe('Rol del mes (integración)', () => {
     expect(turno.range).toBe('7 a 9 am');
     expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz', 'Carla Díaz']);
     expect(turno.people[0].phone).toMatch(/^55 \d{4} \d{4}$/);
+  });
+
+  it('saca del rol entre semana a quien se dio de baja y deja su lugar disponible', async () => {
+    const { location } = await escenario();
+    await ctx.prisma.participant.updateMany({
+      where: { firstName: 'Beto' },
+      data: { status: ParticipantStatus.INACTIVE },
+    });
+
+    const rol = await reports.monthRoster(location.id, 2026, 11);
+
+    const turno = rol.weekdays[0].slots[0];
+    expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Carla Díaz']);
+    expect(turno.missing).toBe(1);
   });
 
   it('ordena los fines de semana por ordinal, el sábado antes que el domingo', async () => {
