@@ -21,6 +21,7 @@ import { SettingsService } from '../common/settings/settings.service';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
+import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { OutboxService } from '../whatsapp/outbox.service';
 import { MembershipsService } from './memberships.service';
 import { ParticipantsService } from './participants.service';
@@ -60,6 +61,8 @@ export interface UpdateProfileResult {
   participant: Participant;
   /** Turnos futuros cancelados por una pausa o baja. */
   cancelledShifts: number;
+  /** Turnos fijos que se le quitaron; solo la baja definitiva los quita. */
+  removedFixedShifts: number;
   /** Avisos que no impiden guardar pero el administrador debe conocer. */
   warnings: string[];
 }
@@ -91,6 +94,7 @@ export class ParticipantProfileService {
     private readonly participants: ParticipantsService,
     private readonly memberships: MembershipsService,
     private readonly assignments: AssignmentsService,
+    private readonly recurring: RecurringAssignmentsService,
     private readonly outbox: OutboxService,
   ) {}
 
@@ -196,12 +200,12 @@ export class ParticipantProfileService {
     // 5. Estado, al final: es lo que encadena efectos
     // ---------------------------------------------------------------------
 
-    const cancelledShifts = await this.applyStatus(params, anterior, actor);
+    const { cancelledShifts, removedFixedShifts } = await this.applyStatus(params, anterior, actor);
 
     const participant = await this.prisma.participant.findUniqueOrThrow({
       where: { id: params.participantId },
     });
-    return { participant, cancelledShifts, warnings };
+    return { participant, cancelledShifts, removedFixedShifts, warnings };
   }
 
   /**
@@ -366,13 +370,19 @@ export class ParticipantProfileService {
    * Se cancela **sin convocar**: una baja administrativa con quince turnos
    * abriría quince convocatorias de golpe. Los huecos quedan visibles en el
    * tablero y el administrador decide cuándo y cómo convocar.
+   *
+   * La baja definitiva quita además sus turnos fijos: el generador ya ignora a
+   * quien no está activo, pero mientras siga como titular ocupa el lugar y nadie
+   * más puede tomarlo. La pausa los conserva, para que al volver siga en su sitio.
    */
   private async applyStatus(
     params: UpdateProfileParams,
     anterior: Participant,
     actor: { id: string | null; name: string | null },
-  ): Promise<number> {
-    if (params.status === undefined || params.status === anterior.status) return 0;
+  ): Promise<{ cancelledShifts: number; removedFixedShifts: number }> {
+    if (params.status === undefined || params.status === anterior.status) {
+      return { cancelledShifts: 0, removedFixedShifts: 0 };
+    }
 
     await this.prisma.participant.update({
       where: { id: params.participantId },
@@ -391,7 +401,9 @@ export class ParticipantProfileService {
       metadata: { participantName: fullName(anterior) },
     });
 
-    if (params.status === ParticipantStatus.ACTIVE) return 0;
+    if (params.status === ParticipantStatus.ACTIVE) {
+      return { cancelledShifts: 0, removedFixedShifts: 0 };
+    }
 
     const futuras = await this.prisma.assignment.findMany({
       where: {
@@ -413,10 +425,22 @@ export class ParticipantProfileService {
       });
     }
 
+    const fixedShifts =
+      params.status === ParticipantStatus.INACTIVE
+        ? await this.prisma.recurringAssignment.findMany({
+            where: { participantId: params.participantId, active: true },
+            select: { id: true },
+          })
+        : [];
+    for (const fixedShift of fixedShifts) {
+      await this.recurring.unassign(fixedShift.id, actor);
+    }
+
     this.logger.log(
       `${fullName(anterior)} pasa a ${params.status}; ` +
-        `se liberaron ${futuras.length} turno(s) futuro(s) sin convocar`,
+        `se liberaron ${futuras.length} turno(s) futuro(s) sin convocar ` +
+        `y se quitaron ${fixedShifts.length} turno(s) fijo(s)`,
     );
-    return futuras.length;
+    return { cancelledShifts: futuras.length, removedFixedShifts: fixedShifts.length };
   }
 }

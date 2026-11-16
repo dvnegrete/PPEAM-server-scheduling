@@ -3,6 +3,7 @@ import {
   AssignmentOrigin,
   AssignmentStatus,
   CoverageRequestStatus,
+  ParticipantStatus,
   Prisma,
   ShiftStatus,
 } from '@prisma/client';
@@ -229,6 +230,40 @@ export interface RosterMonth {
   weekdays: RosterDay[];
   /** Primer sábado, primer domingo, segundo sábado, … */
   weekends: RosterDay[];
+}
+
+/** Un turno fijo de una persona: «Lunes · cada semana» o «Primer sábado». */
+export interface ParticipantFixedSlot {
+  label: string;
+  range: string;
+  isCaptain: boolean;
+}
+
+/** Una fecha concreta que la persona tiene registrada, vigente o ya cancelada. */
+export interface ParticipantUpcomingShift {
+  assignmentId: string;
+  shiftId: string;
+  /** Fecha local del punto, `YYYY-MM-DD`. */
+  date: string;
+  /** «lunes 16 de noviembre». */
+  label: string;
+  range: string;
+  origin: AssignmentOrigin;
+  /** Ya avisó que no va: se muestra para que nadie lo capture dos veces. */
+  cancelled: boolean;
+  cancelReason: string | null;
+  isCaptain: boolean;
+  /** Con quién comparte el turno, sin contarla a ella. */
+  companions: string[];
+  /** Su cónyuge, si atiende este mismo turno; sirve para ofrecer la baja doble. */
+  spouseName: string | null;
+}
+
+/** Respuesta a «¿qué turnos cubre tal persona?». */
+export interface ParticipantShifts {
+  participant: { id: string; name: string; phone: string };
+  fixed: ParticipantFixedSlot[];
+  upcoming: ParticipantUpcomingShift[];
 }
 
 /**
@@ -599,6 +634,7 @@ export class ReportsService {
                 paternalSurname: true,
                 phoneE164: true,
                 spouseId: true,
+                status: true,
               },
             },
           },
@@ -642,6 +678,7 @@ export class ReportsService {
     // --- Entre semana -------------------------------------------------------
     // Titular es quien tiene el turno fijo en la mayoría de las fechas, haya
     // cancelado alguna o no: una baja aislada no lo saca del rol del mes.
+    // Quien se dio de baja del todo sí sale: ya no va a ir a ninguna.
     const porFranja = new Map<string, RosterShift[]>();
     for (const shift of shifts) {
       const dia = weekdayOf(shift);
@@ -661,6 +698,7 @@ export class ReportsService {
         for (const shift of grupo) {
           for (const assignment of shift.assignments) {
             if (assignment.origin !== AssignmentOrigin.FIXED) continue;
+            if (assignment.participant.status === ParticipantStatus.INACTIVE) continue;
             const previo = fijos.get(assignment.participantId);
             fijos.set(assignment.participantId, {
               participant: assignment.participant,
@@ -872,6 +910,136 @@ export class ReportsService {
         cancellations,
       },
       days: [...days.values()],
+    };
+  }
+
+  /**
+   * Los turnos de una persona en un punto: los fijos, que dicen qué le toca
+   * siempre, y las fechas que ya tiene registradas de ahora en adelante.
+   *
+   * Las fechas incluyen lo que no es fijo —una sustitución, una inscripción— y
+   * también las bajas: cuando avisan que alguien está enfermo, ver que ya
+   * canceló evita buscar un turno que ya se liberó.
+   */
+  async participantShifts(locationId: string, participantId: string): Promise<ParticipantShifts> {
+    const [location, participant] = await Promise.all([
+      this.prisma.location.findUniqueOrThrow({ where: { id: locationId } }),
+      this.prisma.participant.findUniqueOrThrow({
+        where: { id: participantId },
+        select: {
+          id: true,
+          firstName: true,
+          paternalSurname: true,
+          maternalSurname: true,
+          displayName: true,
+          phoneE164: true,
+          spouseId: true,
+        },
+      }),
+    ]);
+
+    const [recurring, assignments] = await Promise.all([
+      this.prisma.recurringAssignment.findMany({
+        where: {
+          participantId,
+          active: true,
+          shiftTemplate: { locationId, active: true },
+        },
+        include: { shiftTemplate: true },
+      }),
+      this.prisma.assignment.findMany({
+        where: {
+          participantId,
+          shift: {
+            locationId,
+            endsAt: { gte: this.time.now() },
+            status: { not: ShiftStatus.CANCELLED },
+          },
+        },
+        include: {
+          shift: {
+            include: {
+              assignments: {
+                where: { status: { in: OCCUPYING_STATUSES } },
+                include: {
+                  participant: {
+                    select: {
+                      id: true,
+                      firstName: true,
+                      paternalSurname: true,
+                      maternalSurname: true,
+                      displayName: true,
+                    },
+                  },
+                },
+              },
+              template: {
+                select: {
+                  recurringAssignments: {
+                    where: { active: true, isCaptain: true },
+                    select: { participantId: true },
+                  },
+                },
+              },
+            },
+          },
+        },
+        orderBy: [{ shift: { date: 'asc' } }, { shift: { startMinute: 'asc' } }],
+      }),
+    ]);
+
+    // Lunes primero: el domingo (0) se lee al final de la semana, no al inicio.
+    const ordenDeDia = (weekday: number) => (weekday + 6) % 7;
+    const fixed = [...recurring]
+      .sort(
+        (a, b) =>
+          ordenDeDia(a.shiftTemplate.weekday) - ordenDeDia(b.shiftTemplate.weekday) ||
+          a.shiftTemplate.weekOfMonth - b.shiftTemplate.weekOfMonth ||
+          a.shiftTemplate.startMinute - b.shiftTemplate.startMinute,
+      )
+      .map((item): ParticipantFixedSlot => {
+        const { weekday, weekOfMonth, startMinute, endMinute } = item.shiftTemplate;
+        const dia = DIAS_DEL_ROL[weekday];
+        return {
+          label:
+            weekOfMonth === 0
+              ? `${dia} · cada semana`
+              : `${ORDINALES_DEL_ROL[weekOfMonth]} ${dia.toLowerCase()} del mes`,
+          range: this.time.formatRangeShort(startMinute, endMinute),
+          isCaptain: item.isCaptain,
+        };
+      });
+
+    const upcoming = assignments.map((assignment): ParticipantUpcomingShift => {
+      const { shift } = assignment;
+      const cancelled = !OCCUPYING_STATUSES.includes(assignment.status);
+      const otros = shift.assignments.filter((otro) => otro.participantId !== participantId);
+      const conyuge = otros.find((otro) => otro.participantId === participant.spouseId);
+      return {
+        assignmentId: assignment.id,
+        shiftId: shift.id,
+        date: shift.date.toISOString().slice(0, 10),
+        label: this.time.formatDate(shift.date, location.timezone),
+        range: this.time.formatRangeShort(shift.startMinute, shift.endMinute),
+        origin: assignment.origin,
+        cancelled,
+        cancelReason: cancelled ? assignment.cancelReason : null,
+        isCaptain: !cancelled && captainOf(shift) === participantId,
+        companions: otros.map((otro) => displayName(otro.participant)),
+        // Solo si la persona sigue en el turno: a quien ya canceló no hay baja
+        // doble que ofrecerle.
+        spouseName: !cancelled && conyuge ? displayName(conyuge.participant) : null,
+      };
+    });
+
+    return {
+      participant: {
+        id: participant.id,
+        name: displayName(participant),
+        phone: formatNationalPhone(participant.phoneE164),
+      },
+      fixed,
+      upcoming,
     };
   }
 

@@ -375,6 +375,42 @@ describe('Edición administrativa de un participante (integración)', () => {
       expect(enPasado.status).toBe(AssignmentStatus.ASSIGNED);
     });
 
+    it('la baja quita sus turnos fijos; la pausa los conserva', async () => {
+      const ana = await createParticipant(ctx.prisma, locationId, 'Ana López Pérez');
+      const beto = await createParticipant(ctx.prisma, locationId, 'Beto Ruiz Soto');
+      const template = await ctx.prisma.shiftTemplate.create({
+        data: { locationId, weekday: 1, startMinute: 420, endMinute: 540 },
+      });
+      await ctx.prisma.recurringAssignment.createMany({
+        data: [
+          { shiftTemplateId: template.id, participantId: ana.id, isCaptain: true },
+          { shiftTemplateId: template.id, participantId: beto.id },
+        ],
+      });
+
+      const baja = await perfiles.updateProfile({
+        participantId: ana.id,
+        locationId,
+        status: ParticipantStatus.INACTIVE,
+        ...admin,
+      });
+      const pausa = await perfiles.updateProfile({
+        participantId: beto.id,
+        locationId,
+        status: ParticipantStatus.PAUSED,
+        ...admin,
+      });
+
+      expect(baja.removedFixedShifts).toBe(1);
+      expect(pausa.removedFixedShifts).toBe(0);
+      const fixedShifts = await ctx.prisma.recurringAssignment.findMany({
+        where: { shiftTemplateId: template.id },
+      });
+      const byParticipant = new Map(fixedShifts.map((item) => [item.participantId, item]));
+      expect(byParticipant.get(ana.id)).toMatchObject({ active: false, isCaptain: false });
+      expect(byParticipant.get(beto.id)).toMatchObject({ active: true });
+    });
+
     it('no convoca a nadie ni avisa al encargado', async () => {
       const ana = await createParticipant(ctx.prisma, locationId, 'Ana López Pérez');
       await createShift(ctx.prisma, locationId, {

@@ -97,7 +97,7 @@ export class PollDraftService {
       }));
 
     // const question = this.questionText(from, to, location.timezone);
-    const question = `Puedo hacerme disponible para cubrir alguno de los siguientes turnos:`;
+    const question = `Queridos hermanos. Requerimos su apoyo para cubrir las siguientes necesidades en los turnos:`;
 
     const plainText = this.plainText(question, options);
 

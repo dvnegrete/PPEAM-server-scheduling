@@ -236,7 +236,7 @@ export class AdminController {
     @Body() dto: UpdateParticipantDto,
     @CurrentAdmin() admin: AdminTokenPayload,
   ) {
-    const { cancelledShifts, warnings } = await this.profiles.updateProfile({
+    const { cancelledShifts, removedFixedShifts, warnings } = await this.profiles.updateProfile({
       participantId,
       locationId: id,
       firstName: dto.firstName,
@@ -262,7 +262,7 @@ export class AdminController {
       select: padronSelect(id),
     });
 
-    return { ...flattenMembership(fila), cancelledShifts, warnings };
+    return { ...flattenMembership(fila), cancelledShifts, removedFixedShifts, warnings };
   }
 
   /** Estado civil y cónyuge de un participante. */
@@ -322,6 +322,16 @@ export class AdminController {
       ),
     );
     return Object.fromEntries(entradas);
+  }
+
+  /**
+   * «¿Qué turnos cubre tal persona?»: sus turnos fijos y las fechas que ya
+   * tiene registradas de hoy en adelante, sustituciones incluidas.
+   */
+  @Get('locations/:id/participants/:participantId/shifts')
+  @UseGuards(AdminAuthGuard)
+  participantShifts(@Param('id') id: string, @Param('participantId') participantId: string) {
+    return this.reports.participantShifts(id, participantId);
   }
 
   /** Participantes del punto que pueden figurar como cónyuge. */
