@@ -515,7 +515,7 @@ describe('Tablero de administradores (integración)', () => {
       expect(borrador.options).toHaveLength(1);
       expect(borrador.options[0].text).toBe('Dom. 30 de *07:00 a 09:00 am* (Un(a) Participante)');
       expect(borrador.question).toContain(
-        'Puedo hacerme disponible para cubrir alguno de los siguientes turnos:',
+        'Queridos hermanos. Requerimos su apoyo para cubrir las siguientes necesidades en los turnos:',
       );
       expect(borrador.truncated).toBe(false);
     });

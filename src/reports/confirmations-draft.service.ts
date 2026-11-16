@@ -50,6 +50,9 @@ interface Actor {
   name?: string | null;
 }
 
+/** Despedida del mensaje de confirmación; el panel la repite al rearmarlo. */
+const CLOSING_MESSAGE = 'Gracias hermanos agradecemos su disponibilidad, Jehová les bendiga';
+
 /**
  * Arma el mensaje con el que se confirma en el grupo a quien va a cubrir un turno.
  *
@@ -264,10 +267,11 @@ export class ConfirmationsDraftService {
 
     const lineas = [...porTurno.values()].map((grupo) => {
       const nombres = this.enumerar(grupo.map((row) => `[${row.name}]`));
-      return `- ${grupo[0].dayLabel} de ${grupo[0].range}: ${nombres}`;
+      // Entre asteriscos WhatsApp lo pone en negritas, igual que en la encuesta.
+      return `- ${grupo[0].dayLabel} de *${grupo[0].range}*: ${nombres}`;
     });
 
-    return `${encabezado}\n${lineas.join('\n')}`;
+    return `${encabezado}\n${lineas.join('\n')}\n\n${CLOSING_MESSAGE}`;
   }
 
   /** «A», «A y B», «A, B y C». */

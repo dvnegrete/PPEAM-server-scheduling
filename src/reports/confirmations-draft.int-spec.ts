@@ -68,7 +68,8 @@ describe('Mensaje de confirmaciones para el grupo (integración)', () => {
       expect(borrador.rows).toHaveLength(2);
       expect(borrador.text).toBe(
         'Confirmamos el siguiente horario:\n' +
-          '- Sáb. 29 de 09:00 a 11:00 am: [Martha López Ruiz] y [Ricardo Peña Soto]',
+          '- Sáb. 29 de *09:00 a 11:00 am*: [Martha López Ruiz] y [Ricardo Peña Soto]\n\n' +
+          'Gracias hermanos agradecemos su disponibilidad, Jehová les bendiga',
       );
     });
 
@@ -91,8 +92,9 @@ describe('Mensaje de confirmaciones para el grupo (integración)', () => {
 
       expect(borrador.text).toBe(
         'Confirmamos los siguientes horarios:\n' +
-          '- Sáb. 29 de 09:00 a 11:00 am: [Martha López Ruiz]\n' +
-          '- Dom. 30 de 07:00 a 09:00 am: [Elena Núñez]',
+          '- Sáb. 29 de *09:00 a 11:00 am*: [Martha López Ruiz]\n' +
+          '- Dom. 30 de *07:00 a 09:00 am*: [Elena Núñez]\n\n' +
+          'Gracias hermanos agradecemos su disponibilidad, Jehová les bendiga',
       );
     });
 
