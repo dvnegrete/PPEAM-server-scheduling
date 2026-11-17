@@ -26,6 +26,11 @@ export class AppConfigService {
     return this.nodeEnv === 'test';
   }
 
+  /** Si corren las tareas programadas. Sin ellas el servidor solo atiende peticiones. */
+  get backgroundJobsEnabled(): boolean {
+    return this.get('BACKGROUND_JOBS_ENABLED');
+  }
+
   get port(): number {
     return this.get('PORT');
   }
