@@ -7,7 +7,12 @@ import { ImportModule } from '../import/import.module';
 import { ReportsModule } from '../reports/reports.module';
 import { SchedulingModule } from '../scheduling/scheduling.module';
 import { SupervisorsModule } from '../supervisors/supervisors.module';
+import { AdminAccountsController } from './admin-accounts.controller';
 import { AdminAuthGuard } from './admin-auth.guard';
+import { AdminDashboardController } from './admin-dashboard.controller';
+import { AdminParticipantsController } from './admin-participants.controller';
+import { AdminRecurringController } from './admin-recurring.controller';
+import { AdminSupervisorsController } from './admin-supervisors.controller';
 import { AdminController } from './admin.controller';
 import { AdminUsersService } from './admin-users.service';
 import { AdminAuthService } from './auth.service';
@@ -35,7 +40,14 @@ import { AdminAuthService } from './auth.service';
       }),
     }),
   ],
-  controllers: [AdminController],
+  controllers: [
+    AdminAccountsController,
+    AdminDashboardController,
+    AdminParticipantsController,
+    AdminRecurringController,
+    AdminSupervisorsController,
+    AdminController,
+  ],
   providers: [AdminAuthService, AdminAuthGuard, AdminUsersService],
   exports: [AdminAuthService],
 })

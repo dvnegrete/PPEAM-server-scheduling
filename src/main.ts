@@ -17,7 +17,8 @@ async function bootstrap(): Promise<void> {
 
   await app.listen(config.port);
   new Logger('Bootstrap').log(
-    `Servidor escuchando en el puerto ${config.port} (WhatsApp driver: ${config.whatsapp.driver})`,
+    `Servidor escuchando en el puerto ${config.port} (WhatsApp driver: ${config.whatsapp.driver}, ` +
+      `tareas programadas: ${config.backgroundJobsEnabled ? 'encendidas' : 'apagadas'})`,
   );
 }
 

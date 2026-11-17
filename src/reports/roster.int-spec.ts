@@ -1,7 +1,7 @@
 import { AssignmentStatus, ParticipantStatus } from '@prisma/client';
 import { createLocation, createParticipant, createShift } from '../../test/helpers/fixtures';
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
-import { ReportsService } from './reports.service';
+import { MonthRosterService } from './month-roster.service';
 
 /**
  * Noviembre de 2026 empieza en domingo: el primer domingo (1) cae antes que el
@@ -14,11 +14,11 @@ const sieteAm = (dia: number) => new Date(`2026-11-${String(dia).padStart(2, '0'
 
 describe('Rol del mes (integración)', () => {
   let ctx: TestContext;
-  let reports: ReportsService;
+  let roster: MonthRosterService;
 
   beforeAll(async () => {
     ctx = await createFullTestContext();
-    reports = ctx.module.get(ReportsService);
+    roster = ctx.module.get(MonthRosterService);
   });
 
   afterAll(async () => {
@@ -79,7 +79,7 @@ describe('Rol del mes (integración)', () => {
 
   it('pone un bloque por día entre semana con los titulares, aunque uno cancele una fecha', async () => {
     const { location } = await escenario();
-    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const rol = await roster.monthRoster(location.id, 2026, 11);
 
     expect(rol.weekdays.map((dia) => dia.title)).toEqual(['Lunes']);
     const turno = rol.weekdays[0].slots[0];
@@ -95,7 +95,7 @@ describe('Rol del mes (integración)', () => {
       data: { status: ParticipantStatus.INACTIVE },
     });
 
-    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const rol = await roster.monthRoster(location.id, 2026, 11);
 
     const turno = rol.weekdays[0].slots[0];
     expect(turno.people.map((p) => p.name)).toEqual(['Ana López', 'Carla Díaz']);
@@ -104,7 +104,7 @@ describe('Rol del mes (integración)', () => {
 
   it('ordena los fines de semana por ordinal, el sábado antes que el domingo', async () => {
     const { location } = await escenario();
-    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const rol = await roster.monthRoster(location.id, 2026, 11);
 
     expect(rol.weekends.map((dia) => [dia.title, dia.subtitle])).toEqual([
       ['Primer sábado', '7 de noviembre de 2026'],
@@ -115,7 +115,7 @@ describe('Rol del mes (integración)', () => {
 
   it('deja fuera del fin de semana a quien canceló', async () => {
     const { location } = await escenario();
-    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const rol = await roster.monthRoster(location.id, 2026, 11);
 
     const sabado = rol.weekends[0].slots[0];
     expect(sabado.people.map((p) => p.name)).toEqual(['Ana López']);
@@ -149,7 +149,7 @@ describe('Rol del mes (integración)', () => {
       });
     }
 
-    const rol = await reports.monthRoster(location.id, 2026, 11);
+    const rol = await roster.monthRoster(location.id, 2026, 11);
     const turno = rol.weekdays[0].slots[0];
     expect(turno.people.map((p) => [p.name, p.isCaptain])).toEqual([
       ['Carla Díaz', true],

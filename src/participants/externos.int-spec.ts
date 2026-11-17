@@ -3,7 +3,7 @@ import { createLocation, createParticipant, createShift } from '../../test/helpe
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { NotificationService } from '../messaging/notification.service';
 import { RemindersService } from '../messaging/reminders.service';
-import { ReportsService } from '../reports/reports.service';
+import { DashboardService } from '../reports/dashboard.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ParticipantsService } from './participants.service';
@@ -17,7 +17,7 @@ describe('Quien cubre sin estar en el padrón (integración)', () => {
   let ctx: TestContext;
   let participantes: ParticipantsService;
   let assignments: AssignmentsService;
-  let reports: ReportsService;
+  let dashboardReport: DashboardService;
   let recurring: RecurringAssignmentsService;
   let notifications: NotificationService;
   let reminders: RemindersService;
@@ -27,7 +27,7 @@ describe('Quien cubre sin estar en el padrón (integración)', () => {
     ctx = await createFullTestContext();
     participantes = ctx.module.get(ParticipantsService);
     assignments = ctx.module.get(AssignmentsService);
-    reports = ctx.module.get(ReportsService);
+    dashboardReport = ctx.module.get(DashboardService);
     recurring = ctx.module.get(RecurringAssignmentsService);
     notifications = ctx.module.get(NotificationService);
     reminders = ctx.module.get(RemindersService);
@@ -253,7 +253,7 @@ describe('Quien cubre sin estar en el padrón (integración)', () => {
         ...admin,
       });
 
-      const turno = (await reports.dashboard(locationId, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(locationId, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
       expect(turno.occupied).toBe(3);
       expect(turno.need).toBe('ok');

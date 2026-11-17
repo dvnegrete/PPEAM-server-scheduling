@@ -1,6 +1,13 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { ActorType, Participant, ParticipantRole, ParticipantStatus } from '@prisma/client';
+import {
+  ActorType,
+  Participant,
+  ParticipantRole,
+  ParticipantStatus,
+  SupervisorPresence,
+} from '@prisma/client';
 import { AUDIT_ACTIONS, AuditService } from '../audit/audit.service';
+import { displayName } from '../common/names/person-name';
 import { TimeService } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -60,12 +67,10 @@ export class SupervisorsService {
       .map((membresia) => membresia.participant)
       .filter((supervisor) => {
         const presence = supervisor.presence;
-        const overrideActive =
-          presence && (presence.until === null || presence.until > this.time.now());
 
         // La disponibilidad declarada a mano es de la persona, no del punto:
         // quien dice «ahora no puedo» no puede atender ninguno.
-        if (overrideActive) return presence.available;
+        if (presence && this.isOverrideActive(presence)) return presence.available;
 
         return supervisor.supervisorWindows.some((window) =>
           this.time.isMinuteWithinWindow(minuteOfDay, window.startMinute, window.endMinute),
@@ -155,10 +160,60 @@ export class SupervisorsService {
       presence,
       windows,
       timezone: location.timezone,
-      overrideActive: Boolean(
-        presence && (presence.until === null || presence.until > this.time.now()),
-      ),
+      overrideActive: this.isOverrideActive(presence),
     };
+  }
+
+  /**
+   * Los encargados del punto con sus franjas y su estado actual, para el panel.
+   *
+   * Se resuelve en un número fijo de consultas: pedir `dutyStatus` por cada
+   * encargado repetía el cálculo de la guardia una vez por persona.
+   */
+  async dutyBoard(locationId: string) {
+    const [memberships, onDuty] = await Promise.all([
+      this.prisma.locationMembership.findMany({
+        where: {
+          locationId,
+          active: true,
+          role: { in: SUPERVISOR_ROLES },
+          participant: { status: ParticipantStatus.ACTIVE },
+        },
+        include: {
+          participant: {
+            include: {
+              presence: true,
+              supervisorWindows: {
+                where: { locationId, active: true },
+                orderBy: [{ weekday: 'asc' }, { startMinute: 'asc' }],
+              },
+            },
+          },
+        },
+      }),
+      this.onDutyNow(locationId),
+    ]);
+    const onDutyIds = new Set(onDuty.map((supervisor) => supervisor.id));
+
+    return memberships.map(({ participant }) => ({
+      id: participant.id,
+      fullName: displayName(participant),
+      phoneE164: participant.phoneE164,
+      onDuty: onDutyIds.has(participant.id),
+      overrideActive: this.isOverrideActive(participant.presence),
+      available: participant.presence?.available ?? null,
+      windows: participant.supervisorWindows.map((window) => ({
+        id: window.id,
+        weekday: window.weekday,
+        startMinute: window.startMinute,
+        endMinute: window.endMinute,
+      })),
+    }));
+  }
+
+  /** La declaración manual manda mientras no expire. */
+  private isOverrideActive(presence: SupervisorPresence | null): boolean {
+    return Boolean(presence && (presence.until === null || presence.until > this.time.now()));
   }
 
   async addWindow(

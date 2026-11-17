@@ -29,6 +29,11 @@ export class SettingsService {
     return parsed.data;
   }
 
+  /** Todos los puntos, por nombre: lo que el panel ofrece para elegir. */
+  listLocations(): Promise<Location[]> {
+    return this.prisma.location.findMany({ orderBy: { name: 'asc' } });
+  }
+
   async forLocation(locationId: string): Promise<LocationSettings> {
     const location = await this.prisma.location.findUnique({
       where: { id: locationId },

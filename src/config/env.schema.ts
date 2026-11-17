@@ -12,6 +12,15 @@ export const envSchema = z
 
     DATABASE_URL: z.string().url(),
 
+    // Tareas programadas: drenar el outbox, recordatorios, plazos de las
+    // solicitudes y extender el calendario. Apagadas por omisión: mientras no se
+    // envían mensajes no hacen falta, y con ellas encendidas el servidor nunca
+    // queda inactivo, así que la plataforma no puede dormirlo.
+    BACKGROUND_JOBS_ENABLED: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((value) => value === 'true'),
+
     // 'stub' registra los envíos en el log en vez de llamar a Meta: permite
     // desarrollar y probar todo el sistema sin credenciales ni costo.
     WHATSAPP_DRIVER: z.enum(['stub', 'cloud-api']).default('stub'),

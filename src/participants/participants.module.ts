@@ -3,6 +3,7 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 import { WhatsAppModule } from '../whatsapp/whatsapp.module';
 import { MembershipsService } from './memberships.service';
 import { OrganizationFieldsService } from './organization-fields.service';
+import { ParticipantDirectoryService } from './participant-directory.service';
 import { ParticipantProfileService } from './participant-profile.service';
 import { ParticipantsService } from './participants.service';
 
@@ -17,12 +18,14 @@ import { ParticipantsService } from './participants.service';
     ParticipantsService,
     OrganizationFieldsService,
     MembershipsService,
+    ParticipantDirectoryService,
     ParticipantProfileService,
   ],
   exports: [
     ParticipantsService,
     OrganizationFieldsService,
     MembershipsService,
+    ParticipantDirectoryService,
     ParticipantProfileService,
   ],
 })

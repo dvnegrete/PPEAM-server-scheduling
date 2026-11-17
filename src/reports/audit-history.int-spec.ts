@@ -2,15 +2,15 @@ import { ActorType } from '@prisma/client';
 import { createLocation, createParticipant } from '../../test/helpers/fixtures';
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { AUDIT_ACTIONS } from '../audit/audit.service';
-import { ReportsService } from './reports.service';
+import { AuditTrailService } from './audit-trail.service';
 
 describe('Bitácora consultable (integración)', () => {
   let ctx: TestContext;
-  let reports: ReportsService;
+  let auditTrail: AuditTrailService;
 
   beforeAll(async () => {
     ctx = await createFullTestContext();
-    reports = ctx.module.get(ReportsService);
+    auditTrail = ctx.module.get(AuditTrailService);
   });
 
   afterAll(async () => {
@@ -51,8 +51,8 @@ describe('Bitácora consultable (integración)', () => {
     }
   }
 
-  const consulta = (extra: Partial<Parameters<ReportsService['auditHistory']>[0]> = {}) =>
-    reports.auditHistory({ limit: 50, verSensibles: true, ...extra });
+  const consulta = (extra: Partial<Parameters<AuditTrailService['auditHistory']>[0]> = {}) =>
+    auditTrail.auditHistory({ limit: 50, verSensibles: true, ...extra });
 
   describe('orden y paginación', () => {
     it('devuelve lo más reciente primero', async () => {
@@ -270,16 +270,16 @@ describe('Bitácora consultable (integración)', () => {
     });
 
     it('el administrador ve también los accesos y las cuentas', async () => {
-      const pagina = await reports.auditHistory({ limit: 50, verSensibles: true });
+      const pagina = await auditTrail.auditHistory({ limit: 50, verSensibles: true });
       expect(pagina.entries).toHaveLength(4);
     });
 
     it('al encargado se le ocultan, incluso si pide esa categoría', async () => {
-      const todo = await reports.auditHistory({ limit: 50, verSensibles: false });
+      const todo = await auditTrail.auditHistory({ limit: 50, verSensibles: false });
       expect(todo.entries).toHaveLength(1);
       expect(todo.entries[0].action).toBe(AUDIT_ACTIONS.SHIFT_GENERATED);
 
-      const forzado = await reports.auditHistory({
+      const forzado = await auditTrail.auditHistory({
         limit: 50,
         verSensibles: false,
         categoria: 'cuentas',

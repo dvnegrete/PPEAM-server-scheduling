@@ -3,7 +3,8 @@ import { createLocation, createParticipant, createShift } from '../../test/helpe
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from './poll-draft.service';
-import { ReportsService } from './reports.service';
+import { AuditTrailService } from './audit-trail.service';
+import { DashboardService } from './dashboard.service';
 
 /** Martes 25 de agosto de 2026, 12:00 hora del centro de México. */
 const NOW = new Date('2026-08-25T18:00:00.000Z');
@@ -12,13 +13,15 @@ const RANGO_FIN = new Date('2026-09-06T23:59:59.000Z');
 
 describe('Tablero de administradores (integración)', () => {
   let ctx: TestContext;
-  let reports: ReportsService;
+  let dashboardReport: DashboardService;
+  let auditTrail: AuditTrailService;
   let assignments: AssignmentsService;
   let poll: PollDraftService;
 
   beforeAll(async () => {
     ctx = await createFullTestContext();
-    reports = ctx.module.get(ReportsService);
+    dashboardReport = ctx.module.get(DashboardService);
+    auditTrail = ctx.module.get(AuditTrailService);
     assignments = ctx.module.get(AssignmentsService);
     poll = ctx.module.get(PollDraftService);
   });
@@ -251,7 +254,7 @@ describe('Tablero de administradores (integración)', () => {
     it('clasifica según el cupo y el mínimo operativo', async () => {
       const { location, shift, gente } = await escenario(3);
 
-      const completo = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const completo = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       expect(completo.days[0].shifts[0].need).toBe('ok');
 
       const primera = await ctx.prisma.assignment.findFirstOrThrow({
@@ -259,7 +262,7 @@ describe('Tablero de administradores (integración)', () => {
       });
       await assignments.cancel({ assignmentId: primera.id, ...admin(), reasonCode: 'otro' });
 
-      const bajoCupo = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const bajoCupo = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       expect(bajoCupo.days[0].shifts[0].need).toBe('bajoCupo');
       expect(bajoCupo.summary.understaffed).toBe(1);
 
@@ -268,7 +271,7 @@ describe('Tablero de administradores (integración)', () => {
       });
       await assignments.cancel({ assignmentId: segunda.id, ...admin(), reasonCode: 'viaje' });
 
-      const bajoMinimo = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const bajoMinimo = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       expect(bajoMinimo.days[0].shifts[0].need).toBe('bajoMinimo');
       expect(bajoMinimo.summary.critical).toBe(1);
       expect(bajoMinimo.summary.cancellations).toBe(2);
@@ -286,7 +289,7 @@ describe('Tablero de administradores (integración)', () => {
         ...admin(),
       });
 
-      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const tablero = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       const turno = tablero.days[0].shifts[0];
 
       expect(turno.occupied).toBe(4);
@@ -303,7 +306,7 @@ describe('Tablero de administradores (integración)', () => {
     it('informa del lugar extra disponible sin contarlo como hueco', async () => {
       const { location } = await escenario(3);
 
-      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
 
       // Completo para la meta: nada que convocar, pero admite uno más.
@@ -315,7 +318,7 @@ describe('Tablero de administradores (integración)', () => {
       // Con 2 de 3 falta 1 por convocar y hay 1 extra detrás, no 2.
       const { location } = await escenario(2);
 
-      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
 
       expect(turno.freeSlots).toBe(1);
@@ -336,7 +339,7 @@ describe('Tablero de administradores (integración)', () => {
         data: { maritalStatus: 'CASADO', spouseId: gente[0].id },
       });
 
-      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
       const primera = turno.participants.find((p) => p.participantId === gente[0].id)!;
       const tercera = turno.participants.find((p) => p.participantId === gente[2].id)!;
@@ -351,7 +354,7 @@ describe('Tablero de administradores (integración)', () => {
       await casar(gente[2].id, gente[0].id);
       await hacerCapitan(location.id, shift.id, gente[2].id);
 
-      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
 
       expect(turno.participants.map((p) => [p.name, p.isCaptain])).toEqual([
@@ -369,7 +372,7 @@ describe('Tablero de administradores (integración)', () => {
         data: { status: 'CANCELLED', cancelledAt: NOW },
       });
 
-      const turno = (await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
+      const turno = (await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN)).days[0]
         .shifts[0];
 
       expect(turno.participants.map((p) => p.name)).toEqual(['Ana López', 'Beto Ruiz']);
@@ -393,7 +396,7 @@ describe('Tablero de administradores (integración)', () => {
         ...admin('Felipe Cruz'),
       });
 
-      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const tablero = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       const turno = tablero.days[0].shifts[0];
 
       const cobertura = turno.participants.find((p) => p.name === 'Dora Sosa');
@@ -424,7 +427,7 @@ describe('Tablero de administradores (integración)', () => {
         startMinute: 7 * 60,
       });
 
-      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const tablero = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       expect(tablero.days).toHaveLength(2);
       expect(tablero.days[0].shifts).toHaveLength(2);
       expect(tablero.days[0].label).toContain('domingo 30 de agosto');
@@ -439,7 +442,7 @@ describe('Tablero de administradores (integración)', () => {
         startMinute: 7 * 60,
       });
 
-      const tablero = await reports.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
+      const tablero = await dashboardReport.dashboard(location.id, RANGO_INICIO, RANGO_FIN);
       expect(tablero.days[0].shifts[0]).toMatchObject({
         range: '7:00 a 9:00',
         startMinute: 420,
@@ -466,7 +469,7 @@ describe('Tablero de administradores (integración)', () => {
         ...admin('Felipe Cruz'),
       });
 
-      const historial = await reports.shiftHistory(shift.id);
+      const historial = await auditTrail.shiftHistory(shift.id);
 
       const baja = historial.find((m) => m.action === 'assignment.cancelled');
       const alta = historial.find((m) => m.action === 'assignment.created');
@@ -494,11 +497,22 @@ describe('Tablero de administradores (integración)', () => {
         ...admin(),
       });
 
-      const movimientos = await reports.recentMovements(location.id, 10);
+      const movimientos = await auditTrail.recentMovements(location.id, 10);
 
       expect(movimientos.length).toBeGreaterThanOrEqual(2);
       expect(movimientos[0].action).toBe('assignment.created');
       expect(movimientos[1].action).toBe('assignment.cancelled');
+    });
+
+    it('no mezcla en la actividad reciente los movimientos de otro punto', async () => {
+      const { shift, gente } = await escenario(3);
+      const otherLocation = await createLocation(ctx.prisma);
+      const asignacion = await ctx.prisma.assignment.findFirstOrThrow({
+        where: { shiftId: shift.id, participantId: gente[0].id },
+      });
+      await assignments.cancel({ assignmentId: asignacion.id, ...admin(), reasonCode: 'trabajo' });
+
+      expect(await auditTrail.recentMovements(otherLocation.id, 10)).toEqual([]);
     });
   });
 
@@ -641,6 +655,10 @@ describe('Tablero de administradores (integración)', () => {
 
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
 
+      // Sin turnos, el aviso es el mismo para los dos grupos: no se arma la
+      // petición a suplencias, que es la que nombra el punto.
+      expect(borrador.substitutesText).toBe(borrador.plainText);
+      expect(borrador.substitutesText).not.toContain(location.name);
       expect(borrador.substitutesText).not.toContain('Requerimos su apoyo');
       expect(borrador.substitutesText).toContain('no hay turnos por cubrir');
     });
@@ -650,7 +668,11 @@ describe('Tablero de administradores (integración)', () => {
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
 
       expect(borrador.options).toHaveLength(0);
-      expect(borrador.plainText).toContain('no hay turnos por cubrir');
+      // Sin la petición de apoyo delante: pedir ayuda y decir que no hace falta
+      // se contradice.
+      expect(borrador.plainText).toBe(
+        'Queridos hermanos. Por ahora no hay turnos por cubrir. ¡Gracias!',
+      );
     });
   });
 });

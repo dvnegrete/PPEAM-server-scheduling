@@ -108,6 +108,36 @@ describe('Encargados: guardia y cola de solicitudes (integración)', () => {
       expect(status.overrideActive).toBe(false);
       expect(status.windows).toHaveLength(1);
     });
+
+    it('lista para el panel a cada encargado con sus franjas y su estado', async () => {
+      const location = await createLocation(ctx.prisma);
+      const elena = await crearEncargado(location.id, 'Elena');
+      const felipe = await crearEncargado(location.id, 'Felipe');
+      await supervisors.addWindow(elena.id, location.id, MARTES, 15 * 60, 18 * 60);
+      await supervisors.addWindow(elena.id, location.id, MARTES, 8 * 60, 14 * 60);
+      await supervisors.setUnavailable(felipe.id);
+
+      const board = await supervisors.dutyBoard(location.id);
+      const byId = new Map(board.map((row) => [row.id, row]));
+
+      expect(board).toHaveLength(2);
+      expect(byId.get(elena.id)).toMatchObject({
+        onDuty: true,
+        overrideActive: false,
+        available: null,
+      });
+      // Las franjas salen ordenadas por hora, no por orden de captura.
+      expect(byId.get(elena.id)?.windows.map((window) => window.startMinute)).toEqual([
+        8 * 60,
+        15 * 60,
+      ]);
+      expect(byId.get(felipe.id)).toMatchObject({
+        onDuty: false,
+        overrideActive: true,
+        available: false,
+        windows: [],
+      });
+    });
   });
 
   describe('reparto exclusivo de solicitudes', () => {

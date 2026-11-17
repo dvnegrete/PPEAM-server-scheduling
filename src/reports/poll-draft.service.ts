@@ -40,6 +40,9 @@ export interface PollDraft {
   maxOptions: number;
 }
 
+/** Lo que se muestra cuando en el rango no falta nadie. */
+const NOTHING_TO_COVER_MESSAGE = 'Queridos hermanos. Por ahora no hay turnos por cubrir. ¡Gracias!';
+
 /**
  * Arma el texto de la encuesta que el administrador publica en el grupo.
  *
@@ -144,9 +147,10 @@ export class PollDraftService {
   // }
 
   private plainText(question: string, options: PollOption[]): string {
-    if (options.length === 0) {
-      return `${question}\n\nPor ahora no hay turnos por cubrir. ¡Gracias!`;
-    }
+    // Sin turnos no se pide apoyo: encabezar con la petición y decir enseguida
+    // que no hace falta nada se contradice.
+    if (options.length === 0) return NOTHING_TO_COVER_MESSAGE;
+
     const lineas = options.map((option) => option.text).join('\n');
     return `${question}\n\n${lineas}`;
   }
