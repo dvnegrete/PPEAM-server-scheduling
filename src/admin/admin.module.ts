@@ -7,6 +7,7 @@ import { ImportModule } from '../import/import.module';
 import { ReportsModule } from '../reports/reports.module';
 import { SchedulingModule } from '../scheduling/scheduling.module';
 import { SupervisorsModule } from '../supervisors/supervisors.module';
+import { AdminAccountsController } from './admin-accounts.controller';
 import { AdminAuthGuard } from './admin-auth.guard';
 import { AdminController } from './admin.controller';
 import { AdminUsersService } from './admin-users.service';
@@ -35,7 +36,7 @@ import { AdminAuthService } from './auth.service';
       }),
     }),
   ],
-  controllers: [AdminController],
+  controllers: [AdminAccountsController, AdminController],
   providers: [AdminAuthService, AdminAuthGuard, AdminUsersService],
   exports: [AdminAuthService],
 })
