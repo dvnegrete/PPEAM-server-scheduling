@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { SettingsService } from '../common/settings/settings.service';
 import { AuditTrailService } from '../reports/audit-trail.service';
+import { MonthRosterService } from '../reports/month-roster.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
 import { AdminAuthGuard, SoloAdmin } from './admin-auth.guard';
@@ -15,6 +16,7 @@ export class AdminController {
   constructor(
     private readonly settings: SettingsService,
     private readonly reports: ReportsService,
+    private readonly monthRoster: MonthRosterService,
     private readonly auditTrail: AuditTrailService,
     private readonly generator: ScheduleGeneratorService,
   ) {}
@@ -34,7 +36,7 @@ export class AdminController {
   @Get('locations/:id/roster')
   @UseGuards(AdminAuthGuard)
   roster(@Param('id') id: string, @Query() query: MonthQueryDto) {
-    return this.reports.monthRoster(id, query.year, query.month);
+    return this.monthRoster.monthRoster(id, query.year, query.month);
   }
 
   @Post('locations/:id/calendar/generate')
