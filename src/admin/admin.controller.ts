@@ -2,7 +2,6 @@ import {
   BadRequestException,
   Body,
   Controller,
-  Delete,
   Get,
   HttpCode,
   Param,
@@ -11,7 +10,6 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { displayName, formalName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { ParticipantDirectoryService } from '../participants/participant-directory.service';
 import { ParticipantsService } from '../participants/participants.service';
@@ -20,12 +18,9 @@ import { ScheduleGeneratorService } from '../scheduling/schedule-generator.servi
 import { AdminAuthGuard, SoloAdmin } from './admin-auth.guard';
 import {
   AnnounceConfirmationsDto,
-  AssignParticipantDto,
-  SetCaptainDto,
   CancelAssignmentDto,
   ConfirmationsQueryDto,
   CoverShiftDto,
-  CreateWindowDto,
   MonthQueryDto,
   AuditQueryDto,
   PollDraftQueryDto,
@@ -35,11 +30,9 @@ import {
 } from './admin.dto';
 import { AdminTokenPayload } from './auth.service';
 import { CurrentAdmin } from './current-admin.decorator';
-import { SupervisorsService } from '../supervisors/supervisors.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { ConfirmationsDraftService } from '../reports/confirmations-draft.service';
 import { PollDraftService } from '../reports/poll-draft.service';
-import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ActorType, AdminRole } from '@prisma/client';
 
 @Controller('api/admin')
@@ -49,11 +42,9 @@ export class AdminController {
     private readonly reports: ReportsService,
     private readonly generator: ScheduleGeneratorService,
     private readonly participants: ParticipantsService,
-    private readonly supervisors: SupervisorsService,
     private readonly assignments: AssignmentsService,
     private readonly pollDraft_: PollDraftService,
     private readonly confirmations: ConfirmationsDraftService,
-    private readonly recurring: RecurringAssignmentsService,
     private readonly directory: ParticipantDirectoryService,
   ) {}
 
@@ -79,117 +70,6 @@ export class AdminController {
   @UseGuards(AdminAuthGuard)
   generate(@Param('id') id: string, @Body() body: MonthQueryDto) {
     return this.generator.generateMonth(id, body.year, body.month);
-  }
-
-  /** Encargados del punto con sus franjas de guardia y su estado actual. */
-  @Get('locations/:id/supervisors')
-  @UseGuards(AdminAuthGuard)
-  supervisorsOf(@Param('id') id: string) {
-    return this.supervisors.dutyBoard(id);
-  }
-
-  @Post('locations/:id/supervisors/:participantId/windows')
-  @UseGuards(AdminAuthGuard)
-  addWindow(
-    @Param('id') id: string,
-    @Param('participantId') participantId: string,
-    @Body() dto: CreateWindowDto,
-  ) {
-    return this.supervisors.addWindow(
-      participantId,
-      id,
-      dto.weekday,
-      dto.startMinute,
-      dto.endMinute,
-    );
-  }
-
-  @Delete('supervisors/windows/:windowId')
-  @UseGuards(AdminAuthGuard)
-  @HttpCode(204)
-  removeWindow(@Param('windowId') windowId: string) {
-    return this.supervisors.removeWindow(windowId);
-  }
-
-  // -------------------------------------------------------------------------
-  // Turnos fijos (quién atiende habitualmente cada franja)
-  // -------------------------------------------------------------------------
-
-  /** Las plantillas del punto con sus titulares habituales. */
-  @Get('locations/:id/recurring')
-  @UseGuards(AdminAuthGuard)
-  async recurringSlots(@Param('id') id: string) {
-    const [slots, porPersona, padron] = await Promise.all([
-      this.recurring.listByLocation(id),
-      this.recurring.countByParticipant(id),
-      this.directory.namesByLocation(id),
-    ]);
-
-    return {
-      slots,
-      // Quiénes no tienen ningún turno fijo todavía: es lo que falta por
-      // capturar y conviene verlo sin tener que recorrer la rejilla.
-      padron: padron.map((persona) => ({
-        id: persona.id,
-        name: displayName(persona),
-        formalName: formalName(persona),
-        recurringCount: porPersona.get(persona.id) ?? 0,
-      })),
-    };
-  }
-
-  /** Quiénes pueden tomar esa franja como titulares. */
-  @Get('locations/:id/recurring/:templateId/candidates')
-  @UseGuards(AdminAuthGuard)
-  async recurringCandidates(@Param('id') id: string, @Param('templateId') templateId: string) {
-    const candidatos = await this.recurring.candidatesFor(templateId, id);
-    return candidatos.map((persona) => ({
-      id: persona.id,
-      name: displayName(persona),
-      formalName: formalName(persona),
-    }));
-  }
-
-  @Post('locations/:id/recurring/:templateId/holders')
-  @UseGuards(AdminAuthGuard)
-  @HttpCode(201)
-  async addRecurringHolder(
-    @Param('templateId') templateId: string,
-    @Body() dto: AssignParticipantDto,
-    @CurrentAdmin() admin: AdminTokenPayload,
-  ) {
-    await this.recurring.assign(templateId, dto.participantId, {
-      id: admin.sub,
-      name: admin.name,
-    });
-    return { ok: true };
-  }
-
-  @Delete('recurring/:recurringId')
-  @UseGuards(AdminAuthGuard)
-  @HttpCode(200)
-  async removeRecurringHolder(
-    @Param('recurringId') recurringId: string,
-    @CurrentAdmin() admin: AdminTokenPayload,
-  ) {
-    await this.recurring.unassign(recurringId, { id: admin.sub, name: admin.name });
-    return { ok: true };
-  }
-
-  /** Marca a un titular como capitán del turno (o se lo quita). */
-  @Patch('recurring/:recurringId/captain')
-  @UseGuards(AdminAuthGuard)
-  @HttpCode(200)
-  async setRecurringCaptain(
-    @Param('recurringId') recurringId: string,
-    @Body() dto: SetCaptainDto,
-    @CurrentAdmin() admin: AdminTokenPayload,
-  ) {
-    await this.recurring.setCaptain(recurringId, dto.isCaptain, {
-      id: admin.sub,
-      name: admin.name,
-    });
-    return { ok: true };
   }
 
   // -------------------------------------------------------------------------

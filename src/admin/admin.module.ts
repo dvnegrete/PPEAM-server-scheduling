@@ -10,6 +10,8 @@ import { SupervisorsModule } from '../supervisors/supervisors.module';
 import { AdminAccountsController } from './admin-accounts.controller';
 import { AdminAuthGuard } from './admin-auth.guard';
 import { AdminParticipantsController } from './admin-participants.controller';
+import { AdminRecurringController } from './admin-recurring.controller';
+import { AdminSupervisorsController } from './admin-supervisors.controller';
 import { AdminController } from './admin.controller';
 import { AdminUsersService } from './admin-users.service';
 import { AdminAuthService } from './auth.service';
@@ -37,7 +39,13 @@ import { AdminAuthService } from './auth.service';
       }),
     }),
   ],
-  controllers: [AdminAccountsController, AdminParticipantsController, AdminController],
+  controllers: [
+    AdminAccountsController,
+    AdminParticipantsController,
+    AdminRecurringController,
+    AdminSupervisorsController,
+    AdminController,
+  ],
   providers: [AdminAuthService, AdminAuthGuard, AdminUsersService],
   exports: [AdminAuthService],
 })
