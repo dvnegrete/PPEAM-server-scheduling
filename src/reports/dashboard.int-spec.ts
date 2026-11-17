@@ -655,7 +655,10 @@ describe('Tablero de administradores (integración)', () => {
 
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
 
-      expect(borrador.substitutesText).not.toContain('Requerimos su apoyo');
+      // Sin turnos, el aviso es el mismo para los dos grupos: no se arma la
+      // petición a suplencias, que es la que nombra el punto.
+      expect(borrador.substitutesText).toBe(borrador.plainText);
+      expect(borrador.substitutesText).not.toContain(location.name);
       expect(borrador.substitutesText).toContain('no hay turnos por cubrir');
     });
 
