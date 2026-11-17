@@ -659,6 +659,7 @@ describe('Tablero de administradores (integración)', () => {
       // petición a suplencias, que es la que nombra el punto.
       expect(borrador.substitutesText).toBe(borrador.plainText);
       expect(borrador.substitutesText).not.toContain(location.name);
+      expect(borrador.substitutesText).not.toContain('Requerimos su apoyo');
       expect(borrador.substitutesText).toContain('no hay turnos por cubrir');
     });
 
@@ -667,7 +668,11 @@ describe('Tablero de administradores (integración)', () => {
       const borrador = await poll.build(location.id, RANGO_INICIO, RANGO_FIN);
 
       expect(borrador.options).toHaveLength(0);
-      expect(borrador.plainText).toContain('no hay turnos por cubrir');
+      // Sin la petición de apoyo delante: pedir ayuda y decir que no hace falta
+      // se contradice.
+      expect(borrador.plainText).toBe(
+        'Queridos hermanos. Por ahora no hay turnos por cubrir. ¡Gracias!',
+      );
     });
   });
 });
