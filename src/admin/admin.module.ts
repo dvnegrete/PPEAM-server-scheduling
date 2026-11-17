@@ -9,6 +9,7 @@ import { SchedulingModule } from '../scheduling/scheduling.module';
 import { SupervisorsModule } from '../supervisors/supervisors.module';
 import { AdminAccountsController } from './admin-accounts.controller';
 import { AdminAuthGuard } from './admin-auth.guard';
+import { AdminDashboardController } from './admin-dashboard.controller';
 import { AdminParticipantsController } from './admin-participants.controller';
 import { AdminRecurringController } from './admin-recurring.controller';
 import { AdminSupervisorsController } from './admin-supervisors.controller';
@@ -41,6 +42,7 @@ import { AdminAuthService } from './auth.service';
   ],
   controllers: [
     AdminAccountsController,
+    AdminDashboardController,
     AdminParticipantsController,
     AdminRecurringController,
     AdminSupervisorsController,
