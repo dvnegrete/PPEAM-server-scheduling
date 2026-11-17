@@ -17,7 +17,6 @@ import { CsvImportService } from '../import/csv-import.service';
 import { ParticipantDirectoryService } from '../participants/participant-directory.service';
 import { ParticipantProfileService } from '../participants/participant-profile.service';
 import { ParticipantsService } from '../participants/participants.service';
-import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
 import { AdminAuthGuard, PermitidoConCambioPendiente, SoloAdmin } from './admin-auth.guard';
@@ -66,7 +65,6 @@ import { ROLE_BY_NAME } from '../import/import.types';
 @Controller('api/admin')
 export class AdminController {
   constructor(
-    private readonly prisma: PrismaService,
     private readonly auth: AdminAuthService,
     private readonly settings: SettingsService,
     private readonly importer: CsvImportService,
@@ -178,7 +176,7 @@ export class AdminController {
   @Get('locations')
   @UseGuards(AdminAuthGuard)
   locations() {
-    return this.prisma.location.findMany({ orderBy: { name: 'asc' } });
+    return this.settings.listLocations();
   }
 
   @Get('locations/:id/calendar')
