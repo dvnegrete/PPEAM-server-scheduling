@@ -12,6 +12,7 @@ import {
 import { ActorType } from '@prisma/client';
 import { ParticipantDirectoryService } from '../participants/participant-directory.service';
 import { ParticipantsService } from '../participants/participants.service';
+import { AuditTrailService } from '../reports/audit-trail.service';
 import { ConfirmationsDraftService } from '../reports/confirmations-draft.service';
 import { PollDraftService } from '../reports/poll-draft.service';
 import { ReportsService } from '../reports/reports.service';
@@ -33,6 +34,7 @@ import { CurrentAdmin } from './current-admin.decorator';
 export class AdminDashboardController {
   constructor(
     private readonly reports: ReportsService,
+    private readonly auditTrail: AuditTrailService,
     private readonly assignments: AssignmentsService,
     private readonly participants: ParticipantsService,
     private readonly directory: ParticipantDirectoryService,
@@ -130,14 +132,14 @@ export class AdminDashboardController {
   @Get('shifts/:shiftId/history')
   @UseGuards(AdminAuthGuard)
   shiftHistory(@Param('shiftId') shiftId: string) {
-    return this.reports.shiftHistory(shiftId);
+    return this.auditTrail.shiftHistory(shiftId);
   }
 
   /** Actividad reciente del punto, para la cabecera del tablero. */
   @Get('locations/:id/movements')
   @UseGuards(AdminAuthGuard)
   movements(@Param('id') id: string, @Query('limit') limit?: string) {
-    return this.reports.recentMovements(id, limit ? Number(limit) : 20);
+    return this.auditTrail.recentMovements(id, limit ? Number(limit) : 20);
   }
 
   /** Texto listo para copiar a la encuesta del grupo. */

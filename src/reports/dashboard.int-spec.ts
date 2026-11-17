@@ -3,6 +3,7 @@ import { createLocation, createParticipant, createShift } from '../../test/helpe
 import { createFullTestContext, resetDatabase, TestContext } from '../../test/helpers/test-context';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { PollDraftService } from './poll-draft.service';
+import { AuditTrailService } from './audit-trail.service';
 import { ReportsService } from './reports.service';
 
 /** Martes 25 de agosto de 2026, 12:00 hora del centro de México. */
@@ -13,12 +14,14 @@ const RANGO_FIN = new Date('2026-09-06T23:59:59.000Z');
 describe('Tablero de administradores (integración)', () => {
   let ctx: TestContext;
   let reports: ReportsService;
+  let auditTrail: AuditTrailService;
   let assignments: AssignmentsService;
   let poll: PollDraftService;
 
   beforeAll(async () => {
     ctx = await createFullTestContext();
     reports = ctx.module.get(ReportsService);
+    auditTrail = ctx.module.get(AuditTrailService);
     assignments = ctx.module.get(AssignmentsService);
     poll = ctx.module.get(PollDraftService);
   });
@@ -466,7 +469,7 @@ describe('Tablero de administradores (integración)', () => {
         ...admin('Felipe Cruz'),
       });
 
-      const historial = await reports.shiftHistory(shift.id);
+      const historial = await auditTrail.shiftHistory(shift.id);
 
       const baja = historial.find((m) => m.action === 'assignment.cancelled');
       const alta = historial.find((m) => m.action === 'assignment.created');
@@ -494,7 +497,7 @@ describe('Tablero de administradores (integración)', () => {
         ...admin(),
       });
 
-      const movimientos = await reports.recentMovements(location.id, 10);
+      const movimientos = await auditTrail.recentMovements(location.id, 10);
 
       expect(movimientos.length).toBeGreaterThanOrEqual(2);
       expect(movimientos[0].action).toBe('assignment.created');

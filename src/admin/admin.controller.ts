@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
 import { SettingsService } from '../common/settings/settings.service';
+import { AuditTrailService } from '../reports/audit-trail.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
 import { AdminAuthGuard, SoloAdmin } from './admin-auth.guard';
@@ -14,6 +15,7 @@ export class AdminController {
   constructor(
     private readonly settings: SettingsService,
     private readonly reports: ReportsService,
+    private readonly auditTrail: AuditTrailService,
     private readonly generator: ScheduleGeneratorService,
   ) {}
 
@@ -84,7 +86,7 @@ export class AdminController {
   @Get('audit')
   @UseGuards(AdminAuthGuard)
   audit(@Query() query: AuditQueryDto, @CurrentAdmin() admin: AdminTokenPayload) {
-    return this.reports.auditHistory({
+    return this.auditTrail.auditHistory({
       from: query.from ? new Date(query.from) : undefined,
       to: query.to ? new Date(query.to) : undefined,
       categoria: query.categoria,
