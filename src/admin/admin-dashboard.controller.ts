@@ -14,8 +14,8 @@ import { ParticipantDirectoryService } from '../participants/participant-directo
 import { ParticipantsService } from '../participants/participants.service';
 import { AuditTrailService } from '../reports/audit-trail.service';
 import { ConfirmationsDraftService } from '../reports/confirmations-draft.service';
+import { DashboardService } from '../reports/dashboard.service';
 import { PollDraftService } from '../reports/poll-draft.service';
-import { ReportsService } from '../reports/reports.service';
 import { AssignmentsService } from '../scheduling/assignments.service';
 import { AdminAuthGuard } from './admin-auth.guard';
 import {
@@ -33,7 +33,7 @@ import { CurrentAdmin } from './current-admin.decorator';
 @Controller('api/admin')
 export class AdminDashboardController {
   constructor(
-    private readonly reports: ReportsService,
+    private readonly dashboardReport: DashboardService,
     private readonly auditTrail: AuditTrailService,
     private readonly assignments: AssignmentsService,
     private readonly participants: ParticipantsService,
@@ -45,7 +45,7 @@ export class AdminDashboardController {
   @Get('locations/:id/dashboard')
   @UseGuards(AdminAuthGuard)
   dashboard(@Param('id') id: string, @Query() query: RangeQueryDto) {
-    return this.reports.dashboard(id, new Date(query.from), new Date(query.to));
+    return this.dashboardReport.dashboard(id, new Date(query.from), new Date(query.to));
   }
 
   /** Da de baja a un participante de un turno. La baja se aplica de inmediato. */
