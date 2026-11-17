@@ -503,6 +503,17 @@ describe('Tablero de administradores (integración)', () => {
       expect(movimientos[0].action).toBe('assignment.created');
       expect(movimientos[1].action).toBe('assignment.cancelled');
     });
+
+    it('no mezcla en la actividad reciente los movimientos de otro punto', async () => {
+      const { shift, gente } = await escenario(3);
+      const otherLocation = await createLocation(ctx.prisma);
+      const asignacion = await ctx.prisma.assignment.findFirstOrThrow({
+        where: { shiftId: shift.id, participantId: gente[0].id },
+      });
+      await assignments.cancel({ assignmentId: asignacion.id, ...admin(), reasonCode: 'trabajo' });
+
+      expect(await auditTrail.recentMovements(otherLocation.id, 10)).toEqual([]);
+    });
   });
 
   describe('texto para la encuesta', () => {

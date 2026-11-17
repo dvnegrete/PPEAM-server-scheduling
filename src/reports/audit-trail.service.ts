@@ -232,22 +232,32 @@ export class AuditTrailService {
 
   /** Últimos movimientos del punto, para la tira de actividad reciente del tablero. */
   async recentMovements(locationId: string, limit = 20): Promise<Movement[]> {
-    const shiftIds = await this.prisma.shift.findMany({
-      where: { locationId },
-      select: { id: true },
-    });
-    const conocidos = new Set(shiftIds.map((shift) => shift.id));
-
     const logs = await this.prisma.auditLog.findMany({
       where: { action: { in: [...MOVEMENT_ACTIONS] } },
       orderBy: { createdAt: 'desc' },
       take: Math.min(limit * 10, 400),
     });
 
+    const shiftIdOf = (log: { metadata: unknown }) =>
+      (log.metadata as { shiftId?: string } | null)?.shiftId;
+
+    // La bitácora no guarda el punto, así que se averigua cuáles de los turnos
+    // mencionados son de este. Se pregunta solo por esos: traer todos los turnos
+    // del punto crecía con cada mes generado.
+    const mentioned = [...new Set(logs.map(shiftIdOf).filter((id): id is string => Boolean(id)))];
+    const ofThisLocation =
+      mentioned.length > 0
+        ? await this.prisma.shift.findMany({
+            where: { locationId, id: { in: mentioned } },
+            select: { id: true },
+          })
+        : [];
+    const known = new Set(ofThisLocation.map((shift) => shift.id));
+
     return logs
       .filter((log) => {
-        const shiftId = (log.metadata as { shiftId?: string } | null)?.shiftId;
-        return shiftId ? conocidos.has(shiftId) : false;
+        const shiftId = shiftIdOf(log);
+        return shiftId ? known.has(shiftId) : false;
       })
       .slice(0, limit)
       .map((log) => this.toMovement(log));
