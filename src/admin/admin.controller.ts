@@ -11,12 +11,12 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
-import { displayName, formalName, PADRON_ORDER } from '../common/names/person-name';
+import { displayName, formalName } from '../common/names/person-name';
 import { SettingsService } from '../common/settings/settings.service';
 import { CsvImportService } from '../import/csv-import.service';
+import { ParticipantDirectoryService } from '../participants/participant-directory.service';
 import { ParticipantProfileService } from '../participants/participant-profile.service';
 import { ParticipantsService } from '../participants/participants.service';
-import { PhoneService } from '../common/phone/phone.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { ReportsService } from '../reports/reports.service';
 import { ScheduleGeneratorService } from '../scheduling/schedule-generator.service';
@@ -60,13 +60,7 @@ import { ConfirmationsDraftService } from '../reports/confirmations-draft.servic
 import { PollDraftService } from '../reports/poll-draft.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
 import { ThrottlerGuard } from '@nestjs/throttler';
-import {
-  ActorType,
-  AdminRole,
-  MaritalStatus,
-  ParticipantRole,
-  ParticipantStatus,
-} from '@prisma/client';
+import { ActorType, AdminRole, MaritalStatus, ParticipantStatus } from '@prisma/client';
 import { ROLE_BY_NAME } from '../import/import.types';
 
 @Controller('api/admin')
@@ -86,7 +80,7 @@ export class AdminController {
     private readonly organization: OrganizationFieldsService,
     private readonly recurring: RecurringAssignmentsService,
     private readonly profiles: ParticipantProfileService,
-    private readonly phone: PhoneService,
+    private readonly directory: ParticipantDirectoryService,
     private readonly adminUsers: AdminUsersService,
   ) {}
 
@@ -207,14 +201,8 @@ export class AdminController {
 
   @Get('locations/:id/participants')
   @UseGuards(AdminAuthGuard)
-  async participantsOf(@Param('id') id: string) {
-    const padron = await this.prisma.participant.findMany({
-      where: { memberships: { some: { locationId: id, active: true } } },
-      orderBy: [...PADRON_ORDER],
-      select: padronSelect(id),
-    });
-
-    return padron.map(flattenMembership);
+  participantsOf(@Param('id') id: string) {
+    return this.directory.listByLocation(id);
   }
 
   /**
@@ -257,12 +245,9 @@ export class AdminController {
       actorName: admin.name,
     });
 
-    const fila = await this.prisma.participant.findUniqueOrThrow({
-      where: { id: participantId },
-      select: padronSelect(id),
-    });
+    const row = await this.directory.rowFor(participantId, id);
 
-    return { ...flattenMembership(fila), cancelledShifts, removedFixedShifts, warnings };
+    return { ...row, cancelledShifts, removedFixedShifts, warnings };
   }
 
   /** Estado civil y cónyuge de un participante. */
@@ -443,17 +428,7 @@ export class AdminController {
     const [slots, porPersona, padron] = await Promise.all([
       this.recurring.listByLocation(id),
       this.recurring.countByParticipant(id),
-      this.prisma.participant.findMany({
-        where: { memberships: { some: { locationId: id, active: true } } },
-        select: {
-          id: true,
-          firstName: true,
-          paternalSurname: true,
-          maternalSurname: true,
-          displayName: true,
-        },
-        orderBy: [...PADRON_ORDER],
-      }),
+      this.directory.namesByLocation(id),
     ]);
 
     return {
@@ -609,46 +584,8 @@ export class AdminController {
   /** Quiénes pueden tomar ese turno, para el selector del tablero. */
   @Get('locations/:id/shifts/:shiftId/available-participants')
   @UseGuards(AdminAuthGuard)
-  async availableParticipants(@Param('id') id: string, @Param('shiftId') shiftId: string) {
-    const candidatos = await this.prisma.participant.findMany({
-      where: {
-        status: 'ACTIVE',
-        OR: [
-          { memberships: { some: { locationId: id, active: true } } },
-          // Los de fuera que ya han cubierto **en este punto**. El acotado
-          // importa: sin él, cada invitado creado aparecería en todos los puntos
-          // para siempre, y la lista dejaría de ser de quien de verdad ha
-          // ayudado aquí.
-          { external: true, assignments: { some: { shift: { locationId: id } } } },
-        ],
-        // Quien ya ocupa un lugar en ese turno no puede volver a tomarlo.
-        NOT: {
-          assignments: {
-            some: { shiftId, status: { in: ['ASSIGNED', 'CONFIRMED'] } },
-          },
-        },
-      },
-      select: {
-        id: true,
-        firstName: true,
-        paternalSurname: true,
-        maternalSurname: true,
-        displayName: true,
-        phoneE164: true,
-        external: true,
-      },
-      orderBy: [...PADRON_ORDER],
-    });
-
-    // El teléfono va ya formateado. Quien se ofrece para cubrir lo hace desde su
-    // número, así que es el dato que el administrador tiene a mano para
-    // buscarlo; en E.164 crudo no se puede leer ni comparar de un vistazo. Se
-    // formatea aquí y no en el panel para no meter la librería de teléfonos en
-    // el paquete del navegador, y los dígitos sirven igual para buscar.
-    return candidatos.map(({ phoneE164, ...persona }) => ({
-      ...persona,
-      phone: this.phone.format(phoneE164),
-    }));
+  availableParticipants(@Param('id') id: string, @Param('shiftId') shiftId: string) {
+    return this.directory.availableForShift(id, shiftId);
   }
 
   /** Movimientos de un turno, incluidas las personas que ya no figuran en él. */
@@ -756,54 +693,4 @@ export class AdminController {
       verSensibles: admin.role === AdminRole.ADMIN,
     });
   }
-}
-
-/**
- * Columnas del padrón. Se comparten entre la consulta y la edición para que el
- * panel reciba exactamente la misma forma por los dos caminos.
- */
-function padronSelect(locationId: string) {
-  return {
-    id: true,
-    firstName: true,
-    paternalSurname: true,
-    maternalSurname: true,
-    displayName: true,
-    phoneE164: true,
-    status: true,
-    optInAt: true,
-    // El rol y la preferencia de avisos son del vínculo con este punto.
-    memberships: {
-      where: { locationId },
-      select: { role: true, coverageAlerts: true, isPrimary: true },
-    },
-    maritalStatus: true,
-    congregation: true,
-    circuit: true,
-    city: true,
-    spouseName: true,
-    spouse: {
-      select: {
-        id: true,
-        firstName: true,
-        paternalSurname: true,
-        maternalSurname: true,
-        displayName: true,
-      },
-    },
-  } as const;
-}
-
-type FilaPadron = {
-  memberships: Array<{ role: ParticipantRole; coverageAlerts: boolean; isPrimary: boolean }>;
-};
-
-/** Aplana la membresía, para que el panel no tenga que saber que existe. */
-function flattenMembership<T extends FilaPadron>({ memberships, ...persona }: T) {
-  return {
-    ...persona,
-    role: memberships[0]?.role ?? 'PARTICIPANT',
-    coverageAlerts: memberships[0]?.coverageAlerts ?? true,
-    isPrimaryLocation: memberships[0]?.isPrimary ?? false,
-  };
 }
