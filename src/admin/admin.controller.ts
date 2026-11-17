@@ -367,29 +367,8 @@ export class AdminController {
   /** Encargados del punto con sus franjas de guardia y su estado actual. */
   @Get('locations/:id/supervisors')
   @UseGuards(AdminAuthGuard)
-  async supervisorsOf(@Param('id') id: string) {
-    const supervisors = await this.supervisors.allSupervisors(id);
-    const onDuty = new Set((await this.supervisors.onDutyNow(id)).map((item) => item.id));
-
-    return Promise.all(
-      supervisors.map(async (supervisor) => {
-        const status = await this.supervisors.dutyStatus(supervisor.id, id);
-        return {
-          id: supervisor.id,
-          fullName: displayName(supervisor),
-          phoneE164: supervisor.phoneE164,
-          onDuty: onDuty.has(supervisor.id),
-          overrideActive: status.overrideActive,
-          available: status.presence?.available ?? null,
-          windows: status.windows.map((window) => ({
-            id: window.id,
-            weekday: window.weekday,
-            startMinute: window.startMinute,
-            endMinute: window.endMinute,
-          })),
-        };
-      }),
-    );
+  supervisorsOf(@Param('id') id: string) {
+    return this.supervisors.dutyBoard(id);
   }
 
   @Post('locations/:id/supervisors/:participantId/windows')
