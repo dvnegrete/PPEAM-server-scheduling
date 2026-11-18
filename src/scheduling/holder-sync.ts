@@ -1,4 +1,4 @@
-import { AssignmentStatus, ShiftStatus } from '@prisma/client';
+import { AssignmentOrigin, AssignmentStatus, ShiftStatus } from '@prisma/client';
 import { OCCUPYING_STATUSES } from './shifts.service';
 
 /**
@@ -45,12 +45,12 @@ export function isHolderOn(holder: Pick<SyncHolder, 'startsOn' | 'endsOn'>, date
 }
 
 /**
- * Qué titulares vigentes caben todavía en el turno y no figuran ya en él.
+ * Titulares vigentes que todavía no figuran en el turno.
  *
  * Quien ya figura —sentado o con una baja— no se vuelve a tocar: si alguien
  * canceló ese día, esa decisión vale más que la regla.
  */
-export function holdersToSeat<T extends SyncHolder>(
+export function pendingHolders<T extends SyncHolder>(
   shift: SyncShift,
   assignments: SyncAssignment[],
   holders: T[],
@@ -59,14 +59,48 @@ export function holdersToSeat<T extends SyncHolder>(
 ): T[] {
   if (!canBeFilled(shift, now)) return [];
 
+  const alreadyListed = new Set(assignments.map((a) => a.participantId));
+  return holders
+    .filter((holder) => isHolderOn(holder, date))
+    .filter((holder) => !alreadyListed.has(holder.participantId));
+}
+
+/** De los titulares pendientes, los que caben en los lugares libres. */
+export function holdersToSeat<T extends SyncHolder>(
+  shift: SyncShift,
+  assignments: SyncAssignment[],
+  holders: T[],
+  date: Date,
+  now: Date,
+): T[] {
   const occupied = assignments.filter((a) => OCCUPYING_STATUSES.includes(a.status)).length;
   const free = shift.capacity - occupied;
   if (free <= 0) return [];
 
-  const alreadyListed = new Set(assignments.map((a) => a.participantId));
+  return pendingHolders(shift, assignments, holders, date, now).slice(0, free);
+}
 
-  return holders
-    .filter((holder) => isHolderOn(holder, date))
-    .filter((holder) => !alreadyListed.has(holder.participantId))
-    .slice(0, free);
+/**
+ * Las asignaciones de quien ocupa el turno solo por una regla que ya no existe.
+ *
+ * Únicamente las que puso el generador (`FIXED`) y siguen ocupando un lugar. Una
+ * cancelación es un hecho registrado y se conserva; quien entró a cubrir o se
+ * agregó a mano lo hizo por decisión de alguien, no por la regla. Tampoco se
+ * toca a quien sigue siendo titular aunque esté en pausa: `currentHolders` debe
+ * incluirlo.
+ */
+export function formerHolders<T extends SyncAssignment & { origin: AssignmentOrigin }>(
+  shift: SyncShift,
+  assignments: T[],
+  currentHolders: ReadonlySet<string>,
+  now: Date,
+): T[] {
+  if (!canBeFilled(shift, now)) return [];
+
+  return assignments.filter(
+    (assignment) =>
+      assignment.origin === AssignmentOrigin.FIXED &&
+      OCCUPYING_STATUSES.includes(assignment.status) &&
+      !currentHolders.has(assignment.participantId),
+  );
 }

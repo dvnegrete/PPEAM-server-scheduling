@@ -12,6 +12,7 @@ import { PrismaService } from '../prisma/prisma.service';
 /** Acciones que cuentan como «movimiento» en la actividad reciente. */
 export const MOVEMENT_ACTIONS = [
   'assignment.cancelled',
+  'assignment.released',
   'assignment.created',
   'assignment.confirmed',
   'coverage.approved',
@@ -286,6 +287,9 @@ export class AuditTrailService {
         description = `${quien ?? 'Alguien'} canceló${turno ? ` ${turno}` : ''}`;
         if (codigo) description += ` · ${codigo}`;
         break;
+      case 'assignment.released':
+        description = `Se retiró a ${quien ?? 'alguien'}${turno ? ` de ${turno}` : ''}: ya no es titular del turno fijo`;
+        break;
       case 'assignment.created':
         description = `${quien ?? 'Alguien'} entró a cubrir${turno ? ` ${turno}` : ''}`;
         break;
@@ -315,7 +319,7 @@ export class AuditTrailService {
         description = `Se decidió mantener el turno${turno ? ` ${turno}` : ''}`;
         break;
       default:
-        // Las nueve de arriba llevan frase propia porque el tablero las muestra
+        // Las de arriba llevan frase propia porque el tablero las muestra
         // en contexto; para el resto basta el nombre de la acción, que el
         // catálogo resuelve en un solo sitio.
         description = etiquetaDe(log.action);

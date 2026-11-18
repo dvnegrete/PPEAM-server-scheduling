@@ -174,7 +174,13 @@ export class RecurringAssignmentsService {
     this.logger.log(`${resultado.nombre} queda como titular habitual del turno ${templateId}`);
   }
 
-  /** Quita a alguien de un turno fijo. No toca los turnos ya generados. */
+  /**
+   * Quita a alguien de un turno fijo.
+   *
+   * No toca los turnos ya generados por sí mismo: en los meses posteriores al
+   * actual, sus fechas se liberan al volver a generar el mes; el mes en curso no
+   * cambia.
+   */
   async unassign(recurringId: string, actor: Actor = {}): Promise<void> {
     const asignacion = await this.prisma.recurringAssignment.findUnique({
       where: { id: recurringId },

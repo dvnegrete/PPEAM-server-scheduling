@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  ActorType,
   AssignmentOrigin,
   AssignmentStatus,
   Location,
@@ -9,10 +10,20 @@ import {
 } from '@prisma/client';
 import { DateTime } from 'luxon';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
+import { fullName, PersonName } from '../common/names/person-name';
 import { TimeService, Weekday } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
-import { canBeFilled, holdersToSeat, isHolderOn, SyncAssignment, SyncShift } from './holder-sync';
-import { OCCUPYING_STATUSES } from './shifts.service';
+import {
+  canBeFilled,
+  formerHolders,
+  holdersToSeat,
+  isHolderOn,
+  pendingHolders,
+  SyncAssignment,
+  SyncShift,
+} from './holder-sync';
+import type { Actor } from './recurring-assignments.service';
+import { OCCUPYING_STATUSES, ShiftsService } from './shifts.service';
 
 export interface GenerationResult {
   shiftsCreated: number;
@@ -22,6 +33,13 @@ export interface GenerationResult {
   assignmentsCreated: number;
   /** Plantillas donde había más titulares fijos que lugares disponibles. */
   overbookedTemplates: string[];
+  /**
+   * Fechas de las que se retiró a quien ya no es titular de ese turno fijo.
+   * Solo ocurre en los meses posteriores al actual.
+   */
+  formerHoldersReleased: number;
+  /** Titulares vigentes que no se sentaron porque el turno ya estaba lleno. */
+  holdersNotSeated: number;
 }
 
 /** Lo que hace falta saber de un turno ya existente para decidir si se rellena. */
@@ -31,6 +49,27 @@ interface ShiftSnapshot {
   status: ShiftStatus;
   startsAt: Date;
   assignments: Array<{ participantId: string; status: AssignmentStatus }>;
+}
+
+/** Un turno tal como se leyó del mes, con lo necesario para retirar a alguien. */
+interface LoadedShift extends ShiftSnapshot {
+  date: Date;
+  startMinute: number;
+  endMinute: number;
+  assignments: Array<{
+    id: string;
+    participantId: string;
+    status: AssignmentStatus;
+    origin: AssignmentOrigin;
+    participant: PersonName;
+  }>;
+}
+
+/** Una plantilla con todos sus titulares activos, estén o no en pausa. */
+interface TemplateWithHolders extends TemplateHolders {
+  weekday: number;
+  weekOfMonth: number;
+  startMinute: number;
 }
 
 /** Los titulares de una plantilla, con la vigencia de cada uno. */
@@ -52,9 +91,13 @@ function snapshotKey(date: Date, startMinute: number): string {
  * Materializa el calendario: convierte las reglas de recurrencia en turnos
  * concretos y sienta a sus titulares fijos.
  *
- * Es idempotente y conservador: si un turno ya existe no se toca, porque para
- * entonces puede tener cancelaciones y coberturas encima. Un cambio en la
- * plantilla se refleja en los meses que aún no se han generado.
+ * Es idempotente y conservador con lo que ya existe, porque para entonces un
+ * turno puede tener cancelaciones y coberturas encima:
+ * - En el mes en curso y en los pasados solo añade: sienta a los titulares que
+ *   falten, sin quitar a nadie.
+ * - En los meses posteriores al actual, además, retira a quien ocupaba una
+ *   fecha solo porque era titular y ya no lo es. Así el rol del mes próximo
+ *   refleja los cambios de turnos fijos sin perder cancelaciones ni coberturas.
  */
 @Injectable()
 export class ScheduleGeneratorService {
@@ -64,24 +107,42 @@ export class ScheduleGeneratorService {
     private readonly prisma: PrismaService,
     private readonly time: TimeService,
     private readonly audit: AuditService,
+    private readonly shifts: ShiftsService,
   ) {}
 
-  async generateMonth(locationId: string, year: number, month: number): Promise<GenerationResult> {
+  /**
+   * Genera o completa un mes.
+   *
+   * `actor` es quien lo pidió desde el panel; queda en la bitácora de cada fecha
+   * de la que se retire a alguien.
+   */
+  async generateMonth(
+    locationId: string,
+    year: number,
+    month: number,
+    actor: Actor = {},
+  ): Promise<GenerationResult> {
     const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
-    const templates = await this.prisma.shiftTemplate.findMany({
+    const allTemplates = await this.prisma.shiftTemplate.findMany({
       where: { locationId, active: true },
       include: {
         recurringAssignments: {
-          // Quien está pausado o dado de baja no se sienta, aunque siga siendo
-          // titular de la franja. Su turno fijo se conserva a propósito: cuando
-          // vuelva a estar activo recupera su lugar sin tener que recapturarlo,
-          // y mientras tanto el hueco queda visible para cubrirlo.
-          where: { active: true, participant: { status: ParticipantStatus.ACTIVE } },
-          include: { participant: true },
+          where: { active: true },
+          include: { participant: { select: { status: true } } },
           orderBy: { createdAt: 'asc' },
         },
       },
     });
+    // Quien está pausado o dado de baja no se sienta, aunque siga siendo titular
+    // de la franja. Su turno fijo se conserva a propósito: cuando vuelva a estar
+    // activo recupera su lugar sin tener que recapturarlo, y mientras tanto el
+    // hueco queda visible para cubrirlo.
+    const templates = allTemplates.map((template) => ({
+      ...template,
+      recurringAssignments: template.recurringAssignments.filter(
+        (recurring) => recurring.participant.status === ParticipantStatus.ACTIVE,
+      ),
+    }));
 
     const result: GenerationResult = {
       shiftsCreated: 0,
@@ -89,9 +150,26 @@ export class ScheduleGeneratorService {
       shiftsFilled: 0,
       assignmentsCreated: 0,
       overbookedTemplates: [],
+      formerHoldersReleased: 0,
+      holdersNotSeated: 0,
     };
 
     const snapshots = await this.loadMonthSnapshots(locationId, year, month);
+
+    if (this.isAfterCurrentMonth(year, month, location.timezone)) {
+      // Antes de sentar: el lugar que deja el titular anterior es el que ocupa
+      // el nuevo. Para decidir quién sigue siendo titular cuenta también quien
+      // está en pausa, para no quitarle su lugar.
+      await this.releaseFormerHolders(
+        location,
+        allTemplates,
+        year,
+        month,
+        snapshots,
+        result,
+        actor,
+      );
+    }
 
     for (const template of templates) {
       const dates = this.time.occurrencesInMonth(
@@ -112,7 +190,9 @@ export class ScheduleGeneratorService {
     this.logger.log(
       `Calendario ${year}-${String(month).padStart(2, '0')} de ${location.name}: ` +
         `${result.shiftsCreated} turno(s) nuevo(s), ${result.shiftsExisting} ya existente(s) ` +
-        `(${result.shiftsFilled} completado(s)), ${result.assignmentsCreated} asignación(es) fija(s)`,
+        `(${result.shiftsFilled} completado(s)), ${result.assignmentsCreated} asignación(es) fija(s), ` +
+        `${result.formerHoldersReleased} retirada(s) por ya no ser titular, ` +
+        `${result.holdersNotSeated} titular(es) sin lugar`,
     );
 
     await this.audit.recordSystem(AUDIT_ACTIONS.SHIFT_GENERATED, 'Location', locationId, {
@@ -148,7 +228,7 @@ export class ScheduleGeneratorService {
     locationId: string,
     year: number,
     month: number,
-  ): Promise<Map<string, ShiftSnapshot>> {
+  ): Promise<Map<string, LoadedShift>> {
     const firstDay = DateTime.utc(year, month, 1);
     const shifts = await this.prisma.shift.findMany({
       where: {
@@ -162,14 +242,144 @@ export class ScheduleGeneratorService {
         id: true,
         date: true,
         startMinute: true,
+        endMinute: true,
         capacity: true,
         status: true,
         startsAt: true,
-        assignments: { select: { participantId: true, status: true } },
+        assignments: {
+          select: {
+            id: true,
+            participantId: true,
+            status: true,
+            origin: true,
+            participant: {
+              select: { firstName: true, paternalSurname: true, maternalSurname: true },
+            },
+          },
+        },
       },
     });
 
     return new Map(shifts.map((shift) => [snapshotKey(shift.date, shift.startMinute), shift]));
+  }
+
+  /** Si el mes pedido es posterior al mes en curso del punto. */
+  private isAfterCurrentMonth(year: number, month: number, timezone: string): boolean {
+    const now = this.time.nowInZone(timezone);
+    return year * 12 + month > now.year * 12 + now.month;
+  }
+
+  /**
+   * Quita de cada fecha a quien la ocupaba solo por ser titular y ya no lo es.
+   *
+   * Lo que se retira lo decide `formerHolders`: nunca una cancelación, una
+   * cobertura ni un alta manual. Se borra la fila —no se marca como cancelada—
+   * para que no cuente como cancelación en los reportes; el rastro queda en la
+   * bitácora, que es de donde sale el historial de cada turno.
+   *
+   * Solo se revisan las fechas que alguna plantilla activa sigue produciendo: un
+   * turno de una franja que se dio de baja no tiene «titulares actuales» con
+   * qué comparar, y vaciarlo sería peor que dejarlo como está.
+   */
+  private async releaseFormerHolders(
+    location: Location,
+    templates: TemplateWithHolders[],
+    year: number,
+    month: number,
+    snapshots: Map<string, LoadedShift>,
+    result: GenerationResult,
+    actor: Actor,
+  ): Promise<void> {
+    const holdersByKey = this.currentHoldersByKey(templates, year, month, location.timezone);
+    const now = this.time.now();
+
+    for (const [key, snapshot] of snapshots) {
+      const currentHolders = holdersByKey.get(key);
+      if (!currentHolders) continue;
+
+      const candidates = formerHolders(snapshot, snapshot.assignments, currentHolders, now);
+      if (candidates.length === 0) continue;
+
+      const shiftLabel = this.shifts.label(snapshot, location.timezone);
+      const { released, status } = await this.prisma.$transaction(async (tx) => {
+        // Se vuelve a leer dentro de la transacción: entre la lectura del mes y
+        // ahora alguien pudo cancelar, y una cancelación ya no se toca.
+        const fresh = await tx.assignment.findMany({
+          where: {
+            id: { in: candidates.map((assignment) => assignment.id) },
+            origin: AssignmentOrigin.FIXED,
+            status: { in: OCCUPYING_STATUSES },
+          },
+          select: { id: true, status: true },
+        });
+        if (fresh.length > 0) {
+          await tx.assignment.deleteMany({
+            where: { id: { in: fresh.map((assignment) => assignment.id) } },
+          });
+        }
+
+        for (const row of fresh) {
+          const assignment = candidates.find((candidate) => candidate.id === row.id)!;
+          await this.audit.record(
+            {
+              actorType: actor.id ? ActorType.ADMIN : ActorType.SYSTEM,
+              actorId: actor.id ?? null,
+              actorName: actor.name ?? null,
+              action: AUDIT_ACTIONS.ASSIGNMENT_RELEASED,
+              entity: 'Assignment',
+              entityId: row.id,
+              before: { status: row.status, origin: AssignmentOrigin.FIXED },
+              metadata: {
+                shiftId: snapshot.id,
+                shiftLabel,
+                participantId: assignment.participantId,
+                participantName: fullName(assignment.participant),
+                reason: 'recurring_removed',
+              },
+            },
+            tx,
+          );
+        }
+
+        const status = await this.shifts.recomputeStatus(snapshot.id, tx);
+        return { released: new Set(fresh.map((assignment) => assignment.id)), status };
+      });
+
+      snapshot.assignments = snapshot.assignments.filter(
+        (assignment) => !released.has(assignment.id),
+      );
+      snapshot.status = status;
+      result.formerHoldersReleased += released.size;
+    }
+  }
+
+  /** Quiénes son titulares de cada fecha y hora del mes, juntando todas las plantillas. */
+  private currentHoldersByKey(
+    templates: TemplateWithHolders[],
+    year: number,
+    month: number,
+    timezone: string,
+  ): Map<string, Set<string>> {
+    const holdersByKey = new Map<string, Set<string>>();
+    for (const template of templates) {
+      const dates = this.time.occurrencesInMonth(
+        year,
+        month,
+        template.weekday as Weekday,
+        template.weekOfMonth,
+        timezone,
+      );
+      for (const date of dates) {
+        const dateColumn = this.time.toDateColumn(date);
+        const key = snapshotKey(dateColumn, template.startMinute);
+        const holders = holdersByKey.get(key) ?? new Set<string>();
+        for (const recurring of template.recurringAssignments) {
+          if (isHolderOn(recurring, dateColumn)) holders.add(recurring.participantId);
+        }
+        holdersByKey.set(key, holders);
+      }
+    }
+    return holdersByKey;
   }
 
   private async materializeShift(
@@ -282,11 +492,20 @@ export class ScheduleGeneratorService {
     dateColumn: Date,
     result: GenerationResult,
   ): Promise<void> {
-    if (this.missingHolders(snapshot, snapshot.assignments, template, dateColumn).length === 0) {
-      return;
-    }
+    const pending = pendingHolders(
+      snapshot,
+      snapshot.assignments,
+      template.recurringAssignments,
+      dateColumn,
+      this.time.now(),
+    );
+    if (pending.length === 0) return;
 
-    const seated = await this.seatMissingHolders(snapshot, template, dateColumn, result);
+    const seated =
+      this.missingHolders(snapshot, snapshot.assignments, template, dateColumn).length === 0
+        ? []
+        : await this.seatMissingHolders(snapshot, template, dateColumn, result);
+    result.holdersNotSeated += Math.max(0, pending.length - seated.length);
     for (const participantId of seated) {
       snapshot.assignments.push({ participantId, status: AssignmentStatus.ASSIGNED });
     }

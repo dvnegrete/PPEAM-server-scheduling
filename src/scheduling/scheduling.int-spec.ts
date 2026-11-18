@@ -333,27 +333,199 @@ describe('Motor de turnos (integración)', () => {
         expect(await ctx.prisma.supervisorTask.count()).toBe(0);
       });
 
-      it('solo añade: a quien se le quitó el turno fijo sigue sentado', async () => {
-        // Regenerar no reconcilia el calendario con el rol de turnos fijos.
-        // Quitar a alguien exige hacerlo turno por turno desde el tablero.
-        const { location, template } = await mesGenerado();
-        const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
-        const fija = await ctx.prisma.recurringAssignment.create({
-          data: { shiftTemplateId: template.id, participantId: ana.id },
-        });
-        await generator.generateMonth(location.id, 2026, 9);
+      describe('cambios de turnos fijos en un mes próximo ya generado', () => {
+        // Septiembre es el mes siguiente al reloj de prueba (25 de agosto).
 
-        await ctx.prisma.recurringAssignment.update({
-          where: { id: fija.id },
-          data: { active: false },
-        });
-        await generator.generateMonth(location.id, 2026, 9);
+        /** Quita el turno fijo como lo haría el panel: la fila queda inactiva. */
+        async function quitarTitular(participantId: string) {
+          await ctx.prisma.recurringAssignment.updateMany({
+            where: { participantId },
+            data: { active: false },
+          });
+        }
 
-        expect(
-          await ctx.prisma.assignment.count({
+        async function hacerTitular(templateId: string, participantId: string) {
+          await ctx.prisma.recurringAssignment.create({
+            data: { shiftTemplateId: templateId, participantId },
+          });
+        }
+
+        async function primerTurno(locationId: string) {
+          return ctx.prisma.shift.findFirstOrThrow({
+            where: { locationId },
+            orderBy: { startsAt: 'asc' },
+          });
+        }
+
+        it('retira a quien ya no es titular y sienta al nuevo', async () => {
+          const { location, template } = await mesGenerado(1);
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+
+          await quitarTitular(ana.id);
+          await hacerTitular(template.id, beto.id);
+          const result = await generator.generateMonth(location.id, 2026, 9, {
+            id: 'admin-1',
+            name: 'Elena Mora',
+          });
+
+          expect(result.formerHoldersReleased).toBe(5);
+          expect(await ctx.prisma.assignment.count({ where: { participantId: ana.id } })).toBe(0);
+          const deBeto = await ctx.prisma.assignment.findMany({
+            where: { participantId: beto.id },
+          });
+          expect(deBeto).toHaveLength(5);
+          expect(deBeto.every((a) => a.origin === AssignmentOrigin.FIXED)).toBe(true);
+        });
+
+        it('deja en la bitácora una entrada por cada fecha retirada', async () => {
+          const { location, template } = await mesGenerado();
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+
+          await quitarTitular(ana.id);
+          await generator.generateMonth(location.id, 2026, 9, {
+            id: 'admin-1',
+            name: 'Elena Mora',
+          });
+
+          const registros = await ctx.prisma.auditLog.findMany({
+            where: { action: 'assignment.released' },
+          });
+          expect(registros).toHaveLength(5);
+          const turnos = await ctx.prisma.shift.findMany({ where: { locationId: location.id } });
+          expect(
+            new Set(registros.map((r) => (r.metadata as { shiftId: string }).shiftId)),
+          ).toEqual(new Set(turnos.map((t) => t.id)));
+          expect(registros[0]).toMatchObject({
+            actorType: ActorType.ADMIN,
+            actorId: 'admin-1',
+            actorName: 'Elena Mora',
+          });
+          expect(registros[0].metadata).toMatchObject({ participantName: 'Ana López' });
+        });
+
+        it('conserva la cancelación que el titular anterior ya había registrado', async () => {
+          const { location, template } = await mesGenerado();
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+          const primero = await primerTurno(location.id);
+          const suAsignacion = await ctx.prisma.assignment.findFirstOrThrow({
+            where: { shiftId: primero.id, participantId: ana.id },
+          });
+          await assignments.cancel({
+            assignmentId: suAsignacion.id,
+            reason: 'Viaje',
+            notify: false,
+          });
+
+          await quitarTitular(ana.id);
+          const result = await generator.generateMonth(location.id, 2026, 9);
+
+          expect(result.formerHoldersReleased).toBe(4);
+          const restantes = await ctx.prisma.assignment.findMany({
+            where: { participantId: ana.id },
+          });
+          expect(restantes).toHaveLength(1);
+          expect(restantes[0]).toMatchObject({
+            id: suAsignacion.id,
+            status: AssignmentStatus.CANCELLED,
+            cancelReason: 'Viaje',
+          });
+        });
+
+        it('conserva a quien entró a cubrir y no sienta al nuevo si ya no cabe', async () => {
+          const { location, template } = await mesGenerado(1);
+          const carla = await createParticipant(ctx.prisma, location.id, 'Carla Díaz');
+          const beto = await createParticipant(ctx.prisma, location.id, 'Beto Ruiz');
+          const primero = await primerTurno(location.id);
+          await assignments.assignManually({ shiftId: primero.id, participantId: carla.id });
+
+          await hacerTitular(template.id, beto.id);
+          const result = await generator.generateMonth(location.id, 2026, 9);
+
+          expect(result.formerHoldersReleased).toBe(0);
+          expect(result.holdersNotSeated).toBe(1);
+          const enElPrimero = await ctx.prisma.assignment.findMany({
+            where: { shiftId: primero.id },
+          });
+          expect(enElPrimero.map((a) => a.participantId)).toEqual([carla.id]);
+          expect(await ctx.prisma.assignment.count({ where: { participantId: beto.id } })).toBe(4);
+        });
+
+        it('no retira a quien está en pausa y sigue siendo titular', async () => {
+          const { location, template } = await mesGenerado();
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+
+          await ctx.prisma.participant.update({
+            where: { id: ana.id },
+            data: { status: ParticipantStatus.PAUSED },
+          });
+          const result = await generator.generateMonth(location.id, 2026, 9);
+
+          expect(result.formerHoldersReleased).toBe(0);
+          expect(
+            await ctx.prisma.assignment.count({
+              where: { participantId: ana.id, status: AssignmentStatus.ASSIGNED },
+            }),
+          ).toBe(5);
+        });
+
+        it('reabre el turno que queda con un lugar libre', async () => {
+          const { location, template } = await mesGenerado(1);
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+          expect((await primerTurno(location.id)).status).toBe(ShiftStatus.FULL);
+
+          await quitarTitular(ana.id);
+          await generator.generateMonth(location.id, 2026, 9);
+
+          const estados = await ctx.prisma.shift.findMany({
+            where: { locationId: location.id },
+            select: { status: true },
+            distinct: ['status'],
+          });
+          expect(estados.map((turno) => turno.status)).toEqual([ShiftStatus.OPEN]);
+        });
+
+        it('en el mes en curso solo añade: quien dejó de ser titular sigue sentado', async () => {
+          // El mes en curso ya se compartió y se está atendiendo; ahí los
+          // cambios se hacen fecha por fecha desde el Tablero.
+          const location = await createLocation(ctx.prisma);
+          const template = await ctx.prisma.shiftTemplate.create({
+            data: {
+              locationId: location.id,
+              weekday: 3,
+              startMinute: 7 * 60,
+              endMinute: 9 * 60,
+              capacity: 3,
+              weekOfMonth: 0,
+            },
+          });
+          const ana = await createParticipant(ctx.prisma, location.id, 'Ana López');
+          await hacerTitular(template.id, ana.id);
+          await generator.generateMonth(location.id, 2026, 8);
+          const antes = await ctx.prisma.assignment.count({
             where: { participantId: ana.id, status: AssignmentStatus.ASSIGNED },
-          }),
-        ).toBe(5);
+          });
+
+          await quitarTitular(ana.id);
+          const result = await generator.generateMonth(location.id, 2026, 8);
+
+          expect(result.formerHoldersReleased).toBe(0);
+          expect(
+            await ctx.prisma.assignment.count({
+              where: { participantId: ana.id, status: AssignmentStatus.ASSIGNED },
+            }),
+          ).toBe(antes);
+        });
       });
 
       it('un cambio de cupo en la franja no llega a los turnos ya creados', async () => {
