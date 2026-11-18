@@ -11,6 +11,7 @@ import { DateTime } from 'luxon';
 import { AuditService, AUDIT_ACTIONS } from '../audit/audit.service';
 import { TimeService, Weekday } from '../common/time/time.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { canBeFilled, holdersToSeat, isHolderOn, SyncAssignment, SyncShift } from './holder-sync';
 import { OCCUPYING_STATUSES } from './shifts.service';
 
 export interface GenerationResult {
@@ -194,7 +195,7 @@ export class ScheduleGeneratorService {
     }
 
     const eligible = template.recurringAssignments.filter((recurring) =>
-      this.isActiveOn(recurring, dateColumn),
+      isHolderOn(recurring, dateColumn),
     );
     const seated = eligible.slice(0, template.capacity);
     const status = eligible.length >= template.capacity ? ShiftStatus.FULL : ShiftStatus.OPEN;
@@ -281,7 +282,7 @@ export class ScheduleGeneratorService {
     dateColumn: Date,
     result: GenerationResult,
   ): Promise<void> {
-    if (this.holdersToSeat(snapshot, snapshot.assignments, template, dateColumn).length === 0) {
+    if (this.missingHolders(snapshot, snapshot.assignments, template, dateColumn).length === 0) {
       return;
     }
 
@@ -312,16 +313,14 @@ export class ScheduleGeneratorService {
     dateColumn: Date,
     result: GenerationResult,
   ): Promise<string[]> {
-    // Un turno cancelado no se repuebla, y el pasado no se reescribe: sentar a
-    // alguien en un turno que ya ocurrió falsearía el historial de asistencia.
-    if (!this.canBeFilled(shift)) return [];
+    if (!canBeFilled(shift, this.time.now())) return [];
 
     const asignaciones = await this.prisma.assignment.findMany({
       where: { shiftId: shift.id },
       select: { participantId: true, status: true },
     });
 
-    const faltantes = this.holdersToSeat(shift, asignaciones, template, dateColumn);
+    const faltantes = this.missingHolders(shift, asignaciones, template, dateColumn);
     if (faltantes.length === 0) return [];
 
     await this.prisma.assignment.createMany({
@@ -348,40 +347,19 @@ export class ScheduleGeneratorService {
     return faltantes.map((recurring) => recurring.participantId);
   }
 
-  private canBeFilled(shift: { status: ShiftStatus; startsAt: Date }): boolean {
-    return shift.status !== ShiftStatus.CANCELLED && shift.startsAt >= this.time.now();
-  }
-
-  /** Qué titulares vigentes caben todavía en el turno y no figuran ya en él. */
-  private holdersToSeat(
-    shift: { capacity: number; status: ShiftStatus; startsAt: Date },
-    assignments: Array<{ participantId: string; status: AssignmentStatus }>,
+  private missingHolders(
+    shift: SyncShift,
+    assignments: SyncAssignment[],
     template: TemplateHolders,
     dateColumn: Date,
   ): TemplateHolders['recurringAssignments'] {
-    if (!this.canBeFilled(shift)) return [];
-
-    const occupied = assignments.filter((a) => OCCUPYING_STATUSES.includes(a.status)).length;
-    const free = shift.capacity - occupied;
-    if (free <= 0) return [];
-
-    // Quien ya figura en el turno —sentado o con una baja— no se vuelve a tocar.
-    const alreadyListed = new Set(assignments.map((a) => a.participantId));
-
-    return template.recurringAssignments
-      .filter((recurring) => this.isActiveOn(recurring, dateColumn))
-      .filter((recurring) => !alreadyListed.has(recurring.participantId))
-      .slice(0, free);
-  }
-
-  /** Respeta las vigencias de la asignación fija (altas y bajas a mitad de año). */
-  private isActiveOn(
-    recurring: { startsOn: Date | null; endsOn: Date | null },
-    date: Date,
-  ): boolean {
-    if (recurring.startsOn && date < recurring.startsOn) return false;
-    if (recurring.endsOn && date > recurring.endsOn) return false;
-    return true;
+    return holdersToSeat(
+      shift,
+      assignments,
+      template.recurringAssignments,
+      dateColumn,
+      this.time.now(),
+    );
   }
 }
 
