@@ -20,6 +20,7 @@ import {
   isHolderOn,
   pendingHolders,
   SyncAssignment,
+  SyncHolder,
   SyncShift,
 } from './holder-sync';
 import type { Actor } from './recurring-assignments.service';
@@ -40,6 +41,18 @@ export interface GenerationResult {
   formerHoldersReleased: number;
   /** Titulares vigentes que no se sentaron porque el turno ya estaba lleno. */
   holdersNotSeated: number;
+}
+
+/** Lo que haría `generateMonth` en un mes ya generado, sin escribir nada. */
+export interface MonthPreview {
+  /** Fechas de las que se retiraría a quien ya no es titular. */
+  toRelease: number;
+  /** Titulares que se sentarían en fechas donde aún no figuran. */
+  toSeat: number;
+  /** Titulares que no cabrían porque el turno ya está lleno. */
+  notSeated: number;
+  /** Turnos de franjas agregadas después de generar el mes. */
+  shiftsToCreate: number;
 }
 
 /** Lo que hace falta saber de un turno ya existente para decidir si se rellena. */
@@ -123,26 +136,7 @@ export class ScheduleGeneratorService {
     actor: Actor = {},
   ): Promise<GenerationResult> {
     const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
-    const allTemplates = await this.prisma.shiftTemplate.findMany({
-      where: { locationId, active: true },
-      include: {
-        recurringAssignments: {
-          where: { active: true },
-          include: { participant: { select: { status: true } } },
-          orderBy: { createdAt: 'asc' },
-        },
-      },
-    });
-    // Quien está pausado o dado de baja no se sienta, aunque siga siendo titular
-    // de la franja. Su turno fijo se conserva a propósito: cuando vuelva a estar
-    // activo recupera su lugar sin tener que recapturarlo, y mientras tanto el
-    // hueco queda visible para cubrirlo.
-    const templates = allTemplates.map((template) => ({
-      ...template,
-      recurringAssignments: template.recurringAssignments.filter(
-        (recurring) => recurring.participant.status === ParticipantStatus.ACTIVE,
-      ),
-    }));
+    const { allTemplates, templates } = await this.loadTemplates(locationId);
 
     const result: GenerationResult = {
       shiftsCreated: 0,
@@ -204,6 +198,46 @@ export class ScheduleGeneratorService {
     return result;
   }
 
+  /**
+   * Lo que cambiaría al volver a generar un mes ya generado, sin escribir nada.
+   *
+   * Aplica las mismas reglas que `generateMonth` (`holder-sync.ts`) sobre los
+   * mismos datos, para que el aviso del panel no prometa algo distinto de lo que
+   * después se hace.
+   */
+  async previewMonth(locationId: string, year: number, month: number): Promise<MonthPreview> {
+    const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
+    const { allTemplates, templates } = await this.loadTemplates(locationId);
+    const snapshots = await this.loadMonthSnapshots(locationId, year, month);
+    const releases = this.isAfterCurrentMonth(year, month, location.timezone);
+    const currentByKey = this.holdersByKey(allTemplates, year, month, location.timezone);
+    const seatableByKey = this.holdersByKey(templates, year, month, location.timezone);
+    const now = this.time.now();
+
+    const preview: MonthPreview = { toRelease: 0, toSeat: 0, notSeated: 0, shiftsToCreate: 0 };
+
+    for (const [key, holders] of currentByKey) {
+      const snapshot = snapshots.get(key);
+      if (!snapshot) {
+        preview.shiftsToCreate += 1;
+        continue;
+      }
+
+      const current = new Set(holders.map((holder) => holder.participantId));
+      const released = releases ? formerHolders(snapshot, snapshot.assignments, current, now) : [];
+      const remaining = snapshot.assignments.filter((assignment) => !released.includes(assignment));
+      const seatable = seatableByKey.get(key) ?? [];
+      const pending = pendingHolders(snapshot, remaining, seatable, snapshot.date, now);
+      const seated = holdersToSeat(snapshot, remaining, seatable, snapshot.date, now);
+
+      preview.toRelease += released.length;
+      preview.toSeat += seated.length;
+      preview.notSeated += pending.length - seated.length;
+    }
+
+    return preview;
+  }
+
   /** Genera los meses que faltan hasta cubrir el horizonte configurado. */
   async generateHorizon(locationId: string, months: number): Promise<GenerationResult[]> {
     const location = await this.prisma.location.findUniqueOrThrow({ where: { id: locationId } });
@@ -263,6 +297,36 @@ export class ScheduleGeneratorService {
     return new Map(shifts.map((shift) => [snapshotKey(shift.date, shift.startMinute), shift]));
   }
 
+  /**
+   * Las plantillas activas con sus titulares.
+   *
+   * `allTemplates` incluye a todos los titulares, para saber quién sigue
+   * siéndolo. `templates` deja solo a los activos, que son los que se sientan:
+   * quien está pausado o dado de baja no se sienta, aunque siga siendo titular
+   * de la franja. Su turno fijo se conserva a propósito: cuando vuelva a estar
+   * activo recupera su lugar sin tener que recapturarlo, y mientras tanto el
+   * hueco queda visible para cubrirlo.
+   */
+  private async loadTemplates(locationId: string) {
+    const allTemplates = await this.prisma.shiftTemplate.findMany({
+      where: { locationId, active: true },
+      include: {
+        recurringAssignments: {
+          where: { active: true },
+          include: { participant: { select: { status: true } } },
+          orderBy: { createdAt: 'asc' },
+        },
+      },
+    });
+    const templates = allTemplates.map((template) => ({
+      ...template,
+      recurringAssignments: template.recurringAssignments.filter(
+        (recurring) => recurring.participant.status === ParticipantStatus.ACTIVE,
+      ),
+    }));
+    return { allTemplates, templates };
+  }
+
   /** Si el mes pedido es posterior al mes en curso del punto. */
   private isAfterCurrentMonth(year: number, month: number, timezone: string): boolean {
     const now = this.time.nowInZone(timezone);
@@ -290,12 +354,13 @@ export class ScheduleGeneratorService {
     result: GenerationResult,
     actor: Actor,
   ): Promise<void> {
-    const holdersByKey = this.currentHoldersByKey(templates, year, month, location.timezone);
+    const holdersByKey = this.holdersByKey(templates, year, month, location.timezone);
     const now = this.time.now();
 
     for (const [key, snapshot] of snapshots) {
-      const currentHolders = holdersByKey.get(key);
-      if (!currentHolders) continue;
+      const holders = holdersByKey.get(key);
+      if (!holders) continue;
+      const currentHolders = new Set(holders.map((holder) => holder.participantId));
 
       const candidates = formerHolders(snapshot, snapshot.assignments, currentHolders, now);
       if (candidates.length === 0) continue;
@@ -353,14 +418,22 @@ export class ScheduleGeneratorService {
     }
   }
 
-  /** Quiénes son titulares de cada fecha y hora del mes, juntando todas las plantillas. */
-  private currentHoldersByKey(
-    templates: TemplateWithHolders[],
+  /**
+   * Los titulares vigentes de cada fecha y hora del mes, juntando todas las
+   * plantillas que caen ahí, por antigüedad y sin repetir a nadie.
+   */
+  private holdersByKey<T extends SyncHolder>(
+    templates: Array<{
+      weekday: number;
+      weekOfMonth: number;
+      startMinute: number;
+      recurringAssignments: T[];
+    }>,
     year: number,
     month: number,
     timezone: string,
-  ): Map<string, Set<string>> {
-    const holdersByKey = new Map<string, Set<string>>();
+  ): Map<string, T[]> {
+    const holdersByKey = new Map<string, T[]>();
     for (const template of templates) {
       const dates = this.time.occurrencesInMonth(
         year,
@@ -372,9 +445,10 @@ export class ScheduleGeneratorService {
       for (const date of dates) {
         const dateColumn = this.time.toDateColumn(date);
         const key = snapshotKey(dateColumn, template.startMinute);
-        const holders = holdersByKey.get(key) ?? new Set<string>();
+        const holders = holdersByKey.get(key) ?? [];
         for (const recurring of template.recurringAssignments) {
-          if (isHolderOn(recurring, dateColumn)) holders.add(recurring.participantId);
+          const listed = holders.some((holder) => holder.participantId === recurring.participantId);
+          if (!listed && isHolderOn(recurring, dateColumn)) holders.push(recurring);
         }
         holdersByKey.set(key, holders);
       }
