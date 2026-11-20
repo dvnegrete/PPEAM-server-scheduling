@@ -12,6 +12,7 @@ import {
 import { displayName, formalName } from '../common/names/person-name';
 import { ParticipantDirectoryService } from '../participants/participant-directory.service';
 import { RecurringAssignmentsService } from '../scheduling/recurring-assignments.service';
+import { RecurringSyncService } from '../scheduling/recurring-sync.service';
 import { AdminAuthGuard } from './admin-auth.guard';
 import { AssignParticipantDto, SetCaptainDto } from './admin.dto';
 import { AdminTokenPayload } from './auth.service';
@@ -23,16 +24,18 @@ export class AdminRecurringController {
   constructor(
     private readonly recurring: RecurringAssignmentsService,
     private readonly directory: ParticipantDirectoryService,
+    private readonly sync: RecurringSyncService,
   ) {}
 
   /** Las plantillas del punto con sus titulares habituales. */
   @Get('locations/:id/recurring')
   @UseGuards(AdminAuthGuard)
   async recurringSlots(@Param('id') id: string) {
-    const [slots, porPersona, padron] = await Promise.all([
+    const [slots, porPersona, padron, pendingMonths] = await Promise.all([
       this.recurring.listByLocation(id),
       this.recurring.countByParticipant(id),
       this.directory.namesByLocation(id),
+      this.sync.pendingChanges(id),
     ]);
 
     return {
@@ -45,7 +48,18 @@ export class AdminRecurringController {
         formalName: formalName(persona),
         recurringCount: porPersona.get(persona.id) ?? 0,
       })),
+      // Meses próximos ya generados que aún no reflejan los turnos fijos: el
+      // rol del mes de esos meses saldría con la gente anterior.
+      pendingMonths,
     };
+  }
+
+  /** Aplica los turnos fijos a los meses próximos que ya están generados. */
+  @Post('locations/:id/recurring/apply')
+  @UseGuards(AdminAuthGuard)
+  @HttpCode(200)
+  applyToUpcomingMonths(@Param('id') id: string, @CurrentAdmin() admin: AdminTokenPayload) {
+    return this.sync.applyToUpcomingMonths(id, { id: admin.sub, name: admin.name });
   }
 
   /** Quiénes pueden tomar esa franja como titulares. */

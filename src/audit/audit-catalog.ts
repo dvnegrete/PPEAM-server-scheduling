@@ -41,6 +41,7 @@ export const AUDIT_CATEGORIES: Record<AuditCategoryId, AuditCategory> = {
       A.ASSIGNMENT_CREATED,
       A.ASSIGNMENT_CONFIRMED,
       A.ASSIGNMENT_CANCELLED,
+      A.ASSIGNMENT_RELEASED,
     ],
   },
   cobertura: {
@@ -118,6 +119,7 @@ const ETIQUETAS: Record<AuditAction, string> = {
   [A.ASSIGNMENT_CREATED]: 'Alta en un turno',
   [A.ASSIGNMENT_CONFIRMED]: 'Confirmación de asistencia',
   [A.ASSIGNMENT_CANCELLED]: 'Cancelación de turno',
+  [A.ASSIGNMENT_RELEASED]: 'Retirado del turno (ya no es titular fijo)',
   [A.COVERAGE_OPENED]: 'Vacante abierta',
   [A.COVERAGE_BROADCAST]: 'Vacante difundida',
   [A.COVERAGE_OFFERED]: 'Ofrecimiento recibido',

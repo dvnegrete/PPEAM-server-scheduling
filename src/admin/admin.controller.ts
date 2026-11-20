@@ -41,8 +41,15 @@ export class AdminController {
 
   @Post('locations/:id/calendar/generate')
   @UseGuards(AdminAuthGuard)
-  generate(@Param('id') id: string, @Body() body: MonthQueryDto) {
-    return this.generator.generateMonth(id, body.year, body.month);
+  generate(
+    @Param('id') id: string,
+    @Body() body: MonthQueryDto,
+    @CurrentAdmin() admin: AdminTokenPayload,
+  ) {
+    return this.generator.generateMonth(id, body.year, body.month, {
+      id: admin.sub,
+      name: admin.name,
+    });
   }
 
   /** Nombre y dirección del punto: la cabecera del panel y el mensaje del grupo. */

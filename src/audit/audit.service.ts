@@ -10,6 +10,8 @@ export const AUDIT_ACTIONS = {
   ASSIGNMENT_CREATED: 'assignment.created',
   ASSIGNMENT_CONFIRMED: 'assignment.confirmed',
   ASSIGNMENT_CANCELLED: 'assignment.cancelled',
+  /** Se quitó a alguien de una fecha porque ya no es titular de ese turno fijo. */
+  ASSIGNMENT_RELEASED: 'assignment.released',
   COVERAGE_OPENED: 'coverage.opened',
   COVERAGE_BROADCAST: 'coverage.broadcast',
   COVERAGE_OFFERED: 'coverage.offered',
